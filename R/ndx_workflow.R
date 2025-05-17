@@ -33,6 +33,7 @@
 #'   - `diagnostics_per_pass`: A list of diagnostic metrics for each pass.
 #'   - `beta_history_per_pass`: A list of beta estimates from each pass.
 #'   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
+#'   - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
 #' @export NDX_Process_Subject
@@ -76,12 +77,13 @@ NDX_Process_Subject <- function(Y_fmri,
   opts_whitening   <- user_options$opts_whitening %||% list()
   opts_ridge       <- user_options$opts_ridge %||% list()
   task_regressor_names <- user_options$task_regressor_names_for_extraction %||% character(0)
-  
+
   # Initialize storage for per-pass results
   diagnostics_per_pass <- list()
   beta_history_per_pass <- list()
   Y_residuals_current <- NULL # Will hold residuals from the previous pass
   VAR_BASELINE_FOR_DES <- NULL # From initial GLM
+  current_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
   
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
@@ -122,7 +124,7 @@ NDX_Process_Subject <- function(Y_fmri,
       events = events, 
       run_idx = run_idx, 
       TR = TR, 
-      spike_TR_mask = spike_TR_mask, # Pass this through
+      spike_TR_mask = current_spike_TR_mask, # Pass through current mask
       user_options = opts_hrf
     )
     current_pass_results$estimated_hrfs <- estimated_hrfs
@@ -134,13 +136,20 @@ NDX_Process_Subject <- function(Y_fmri,
     # For Sprint 2 NDX-13, k_rpca_global will be adaptive.
     if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
     k_rpca_global <- opts_rpca$k_global_target %||% 5 
-    rpca_components <- ndx_rpca_temporal_components_multirun(
+    rpca_out <- ndx_rpca_temporal_components_multirun(
       Y_residuals_cat = Y_residuals_current,
       run_idx = run_idx,
       k_global_target = k_rpca_global,
       user_options = opts_rpca
     )
+    if (!is.null(rpca_out)) {
+      rpca_components <- rpca_out$C_components
+      current_spike_TR_mask <- current_spike_TR_mask | rpca_out$spike_TR_mask
+    } else {
+      rpca_components <- NULL
+    }
     current_pass_results$rpca_components <- rpca_components
+    current_pass_results$spike_TR_mask <- current_spike_TR_mask
 
     # --- 4. Spectral Nuisance Components (NDX-5 / NDX-14) ---
     # For Sprint 2 NDX-14, selection will be BIC/AIC based.
@@ -367,6 +376,7 @@ NDX_Process_Subject <- function(Y_fmri,
      estimated_hrfs = current_pass_results$estimated_hrfs, # From last pass
      pass0_vars = VAR_BASELINE_FOR_DES, # Original baseline variance
      na_mask_whitening = current_pass_results$na_mask_whitening,
+     spike_TR_mask = current_spike_TR_mask,
      X_full_design_final = current_pass_results$X_full_design, # From last pass
      diagnostics_per_pass = diagnostics_per_pass,
      beta_history_per_pass = beta_history_per_pass,

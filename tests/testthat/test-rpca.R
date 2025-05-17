@@ -43,13 +43,15 @@ test_that("ndx_rpca_temporal_components_multirun runs (single run, concat_svd)",
       user_options = user_opts
     )
   })
-  
+
   expect_true(!is.null(components), "Components should not be NULL for valid inputs (single run)")
   if (!is.null(components)) {
-    expect_true(is.matrix(components), "Output should be a matrix (single run)")
-    expect_equal(nrow(components), test_data$total_T, info = "Output rows should match total timepoints (single run)")
-    expect_true(ncol(components) <= k_target, info = sprintf("Output columns (%d) should be <= k_target (%d) (single run)", ncol(components), k_target))
-    expect_true(ncol(components) > 0, info = "Output should have >0 components if k_target > 0 (single run)")
+    expect_true(is.list(components))
+    expect_true(is.matrix(components$C_components))
+    expect_equal(nrow(components$C_components), test_data$total_T)
+    expect_true(ncol(components$C_components) <= k_target)
+    expect_length(components$spike_TR_mask, test_data$total_T)
+    expect_type(components$spike_TR_mask, "logical")
   }
 })
 
@@ -76,13 +78,15 @@ test_that("ndx_rpca_temporal_components_multirun runs (multi-run, concat_svd)", 
       user_options = user_opts
     )
   })
-  
+
   expect_true(!is.null(components), "Components should not be NULL for valid inputs (multi-run)")
   if (!is.null(components)) {
-    expect_true(is.matrix(components), "Output should be a matrix (multi-run)")
-    expect_equal(nrow(components), test_data$total_T, info = "Output rows should match total timepoints (multi-run)")
-    expect_true(ncol(components) <= k_target, info = sprintf("Output columns (%d) should be <= k_target (%d) (multi-run)", ncol(components), k_target))
-    expect_true(ncol(components) > 0, info = "Output should have >0 components if k_target > 0 (multi-run)")
+    expect_true(is.list(components))
+    expect_true(is.matrix(components$C_components))
+    expect_equal(nrow(components$C_components), test_data$total_T)
+    expect_true(ncol(components$C_components) <= k_target)
+    expect_length(components$spike_TR_mask, test_data$total_T)
+    expect_type(components$spike_TR_mask, "logical")
   }
 })
 
@@ -111,14 +115,12 @@ test_that("ndx_rpca_temporal_components_multirun runs with iterative merge strat
 
   expect_true(!is.null(components_iter), "Components should not be NULL for iterative merge")
   if (!is.null(components_iter)) {
-    expect_true(is.matrix(components_iter))
-    expect_equal(nrow(components_iter), test_data$total_T,
-                 info = "Output rows should match total timepoints (iterative)")
-    expect_true(ncol(components_iter) <= k_target,
-                info = sprintf("Output columns (%d) should be <= k_target (%d) (iterative)",
-                                ncol(components_iter), k_target))
-    expect_true(ncol(components_iter) > 0,
-                info = "Output should have >0 components if k_target > 0 (iterative)")
+    expect_true(is.list(components_iter))
+    expect_true(is.matrix(components_iter$C_components))
+    expect_equal(nrow(components_iter$C_components), test_data$total_T)
+    expect_true(ncol(components_iter$C_components) <= k_target)
+    expect_length(components_iter$spike_TR_mask, test_data$total_T)
+    expect_type(components_iter$spike_TR_mask, "logical")
 
     # The C_r components (components_iter) are not guaranteed to be orthonormal.
     # V_global (the voxel-space basis) is orthonormal, but C_r = E_r %*% V_global.

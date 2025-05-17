@@ -52,6 +52,7 @@ A list containing key outputs from the workflow, such as:
   - `diagnostics_per_pass`: A list of diagnostic metrics for each pass.
   - `beta_history_per_pass`: A list of beta estimates from each pass.
   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
+  - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
 }
 \description{
 This function orchestrates the core modules of the ND-X pipeline. 
