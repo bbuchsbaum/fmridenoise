@@ -84,4 +84,50 @@ test_that("ndx_rpca_temporal_components_multirun runs (multi-run, concat_svd)", 
     expect_true(ncol(components) <= k_target, info = sprintf("Output columns (%d) should be <= k_target (%d) (multi-run)", ncol(components), k_target))
     expect_true(ncol(components) > 0, info = "Output should have >0 components if k_target > 0 (multi-run)")
   }
-}) 
+})
+
+test_that("ndx_rpca_temporal_components_multirun runs with iterative merge strategy", {
+  test_data <- .generate_rpca_test_data(N_runs = 3)
+  k_target <- 2
+
+  user_opts <- list(
+    k_per_run_target = 3,
+    rpca_lambda_auto = TRUE,
+    rpca_mu = 0.3,
+    rpca_merge_strategy = "iterative",
+    rpca_term_delta = 1e-6,
+    rpca_max_iter = 2000
+  )
+
+  components_iter <- NULL
+  expect_no_error({
+    components_iter <- ndx_rpca_temporal_components_multirun(
+      Y_residuals_cat = test_data$Y_residuals_cat,
+      run_idx = test_data$run_idx,
+      k_global_target = k_target,
+      user_options = user_opts
+    )
+  })
+
+  expect_true(!is.null(components_iter), "Components should not be NULL for iterative merge")
+  if (!is.null(components_iter)) {
+    expect_true(is.matrix(components_iter))
+    expect_equal(nrow(components_iter), test_data$total_T,
+                 info = "Output rows should match total timepoints (iterative)")
+    expect_true(ncol(components_iter) <= k_target,
+                info = sprintf("Output columns (%d) should be <= k_target (%d) (iterative)",
+                                ncol(components_iter), k_target))
+    expect_true(ncol(components_iter) > 0,
+                info = "Output should have >0 components if k_target > 0 (iterative)")
+
+    if (ncol(components_iter) > 0) {
+      gram <- crossprod(components_iter)
+      off_diag_max <- max(abs(gram[upper.tri(gram)]))
+      diag_dev_max <- max(abs(diag(gram) - 1))
+      expect_lt(off_diag_max, 1e-6,
+                info = "Iterative merge components should be nearly orthogonal")
+      expect_lt(diag_dev_max, 1e-6,
+                info = "Iterative merge components should have unit norm")
+    }
+  }
+})
