@@ -15,7 +15,7 @@
 #'   indicates a TR to be excluded from HRF estimation and potentially other steps.
 #'   If NULL, all TRs are considered valid initially.
 #' @param user_options A list containing various sub-lists of user-configurable options for each module:
-#'   - `opts_pass0`: List of options for `ndx_initial_glm` (e.g., `poly_degree`). This is also used by `ndx_build_design_matrix` for `poly_degree_val`.
+#'   - `opts_pass0`: List of options for `ndx_initial_glm` (e.g., `poly_degree`). This value is forwarded to `ndx_build_design_matrix` via its `poly_degree` argument.
 #'   - `opts_hrf`: List of options for `ndx_estimate_initial_hrfs` (e.g., `hrf_fir_taps`, `good_voxel_R2_threshold`, `lambda1_grid`, `lambda2_grid`, `cv_folds`).
 #'   - `opts_rpca`: List of options for `ndx_rpca_temporal_components_multirun` (e.g., `k_per_run_target`, `rpca_lambda_auto`).
 #'   - `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
@@ -141,7 +141,7 @@ ndx_run_sprint1 <- function(Y_fmri,
     spectral_sines = results$spectral_sines,
     run_idx = run_idx,
     TR = TR,
-    poly_degree_val = opts_pass0$poly_degree, # poly_degree comes from opts_pass0
+    poly_degree = opts_pass0$poly_degree,
     verbose = verbose
   )
   results$X_full_design <- X_full_design
