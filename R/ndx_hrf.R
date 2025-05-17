@@ -17,7 +17,8 @@
 #' @param user_options A list of user-configurable options:
 #'   - `hrf_fir_taps` (integer): Number of FIR basis functions (e.g., 20).
 #'   - `hrf_fir_span_seconds` (numeric): Total duration the FIR model covers (e.g., 24s).
-#'   - `good_voxel_R2_threshold` (numeric): R-squared threshold for selecting good voxels (e.g., 0.02-0.06).
+#'   - `good_voxel_R2_threshold` (numeric): R-squared threshold for selecting good voxels
+#'       (e.g., 0.02-0.06). Use `-Inf` to disable voxel filtering.
 #'   - `cv_folds` (integer): Number of folds for K-fold cross-validation (e.g., 5).
 #'   - `lambda1_grid` (numeric vector): Grid of values for fused penalty `lambda` (L1 on differences).
 #'   - `lambda2_grid` (numeric vector): Grid of values for ridge penalty `gamma` (L2 on coefficients).
@@ -451,7 +452,12 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
   # Validate specific user_options types and values
   if(!is.numeric(user_options$hrf_fir_taps) || user_options$hrf_fir_taps <=0) stop("hrf_fir_taps must be a positive integer.")
   if(!is.numeric(user_options$hrf_fir_span_seconds) || user_options$hrf_fir_span_seconds <=0) stop("hrf_fir_span_seconds must be a positive number.")
-  if(!is.numeric(user_options$good_voxel_R2_threshold) || user_options$good_voxel_R2_threshold < 0 || user_options$good_voxel_R2_threshold > 1) stop("good_voxel_R2_threshold must be between 0 and 1.")
+  thr <- user_options$good_voxel_R2_threshold
+  if(!is.numeric(thr) || length(thr) != 1 || is.na(thr) ||
+     (is.finite(thr) && (thr < 0 || thr > 1)) ||
+     (is.infinite(thr) && thr > 0)) {
+    stop("good_voxel_R2_threshold must be -Inf or a finite number between 0 and 1.")
+  }
   if(!is.numeric(user_options$cv_folds) || user_options$cv_folds <=0) stop("cv_folds must be a positive integer.")
   if(!is.numeric(user_options$lambda1_grid) || length(user_options$lambda1_grid)==0) stop("lambda1_grid must be a non-empty numeric vector.")
   if(!is.numeric(user_options$lambda2_grid) || length(user_options$lambda2_grid)==0) stop("lambda2_grid must be a non-empty numeric vector.")
