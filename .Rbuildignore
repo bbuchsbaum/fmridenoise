@@ -1,7 +1,26 @@
-^\.Rcheck$
+# Git directory
+^\.git$
+
+# RStudio project files
+^\.Rproj\.user$
+
+# R history and data files
+^\.Rhistory$
+^\.RData$
+^\.Ruserdata$
+
+# macOS system files
+^\.DS_Store$
+
+# Empty directory placeholders
 ^R/\.keep$
 ^tests/testthat/\.keep$
-^\.DS_Store$ 
-repomix-output.xml
-run_tests.R
-..Rcheck
+
+# Specific project files/directories to ignore
+^repomix-output\.xml$
+^run_tests\.R$
+^debug_script\.R$
+
+# R CMD check artifacts
+^\.Rcheck$
+^\.\.Rcheck$ # To catch the specific ./..Rcheck warning if it's at package root
