@@ -34,6 +34,8 @@
 #'   - `beta_history_per_pass`: A list of beta estimates from each pass.
 #'   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
 #'   - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
+#'   - `pass0_residuals`: Residuals from the initial GLM (Pass 0) for diagnostics.
+#'   - `S_matrix_rpca_final`: Final RPCA sparse matrix for spike visualization.
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
 #' @export NDX_Process_Subject
@@ -93,6 +95,7 @@ NDX_Process_Subject <- function(Y_fmri,
   Y_residuals_current <- NULL # Will hold residuals from the previous pass
   VAR_BASELINE_FOR_DES <- NULL # From initial GLM
   current_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
+  pass0_residuals <- NULL
   
   # Default options for sub-modules 
   default_opts_ridge <- list(
@@ -125,6 +128,7 @@ NDX_Process_Subject <- function(Y_fmri,
       VAR_BASELINE_FOR_DES <- initial_glm_output$VAR_BASELINE_FOR_DES # Store for all DES calculations
       current_pass_results$Y_residuals_from_glm <- Y_residuals_current
       current_pass_results$pass0_vars <- VAR_BASELINE_FOR_DES
+      pass0_residuals <- Y_residuals_current
     } else {
       if (verbose) message(sprintf("Pass %d: Using residuals from Pass %d.", pass_num, pass_num - 1))
       # Y_residuals_current is already set from the end of the previous pass
@@ -214,7 +218,7 @@ NDX_Process_Subject <- function(Y_fmri,
         k_rpca_global <- current_opts_rpca$k_global_target %||% 5 # Fallback
         if (verbose) message(sprintf("    Pass %d: Invalid/NULL singular values for adaptation, using k_rpca_global = %d from opts/default", pass_num, k_rpca_global))
       }
-    } else { 
+    } else {
       k_rpca_global <- current_opts_rpca$k_global_target %||% 5
       if (verbose && pass_num == 1) message(sprintf("    Pass %d: Using initial k_rpca_global = %d (from opts/default)", pass_num, k_rpca_global))
       else if (verbose && pass_num > 1) message(sprintf("    Pass %d: No adaptive singular values provided, using k_rpca_global = %d (from opts/default)", pass_num, k_rpca_global))
@@ -223,9 +227,10 @@ NDX_Process_Subject <- function(Y_fmri,
     rpca_out <- ndx_rpca_temporal_components_multirun(
       Y_residuals_cat = Y_residuals_current,
       run_idx = run_idx,
-      k_global_target = k_rpca_global, 
+      k_global_target = k_rpca_global,
       user_options = current_opts_rpca # Pass the potentially modified opts_rpca
     )
+    current_pass_results$k_rpca_global <- k_rpca_global
 
     if (!is.null(rpca_out) && is.list(rpca_out)) {
       rpca_components <- rpca_out$C_components 
@@ -264,6 +269,7 @@ NDX_Process_Subject <- function(Y_fmri,
         nw = opts_spectral$nw %||% 3
       )
       current_pass_results$spectral_sines <- spectral_sines
+      current_pass_results$num_spectral_sines <- if (!is.null(spectral_sines)) ncol(spectral_sines)/2 else 0
     } else {
       if (verbose) message(sprintf("  Pass %d: Skipping spectral analysis due to no/empty residuals.", pass_num))
       current_pass_results$spectral_sines <- NULL
@@ -346,6 +352,8 @@ NDX_Process_Subject <- function(Y_fmri,
         K_penalty_diag <- rep(opts_ridge$lambda_ridge %||% 1.0, n_regressors)
         if (verbose) message(sprintf("    Using isotropic ridge with lambda=%.2f for all regressors.", opts_ridge$lambda_ridge %||% 1.0))
       }
+      current_pass_results$lambda_parallel_noise <- opts_ridge$lambda_parallel_noise %||% opts_ridge$lambda_ridge %||% 1.0
+      current_pass_results$lambda_perp_signal <- opts_ridge$lambda_perp_signal %||% opts_ridge$lambda_ridge %||% 1.0
       
       ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
         Y_whitened = current_pass_results$Y_whitened,
@@ -414,7 +422,7 @@ NDX_Process_Subject <- function(Y_fmri,
     if (length(U_NDX_Nuisance_Combined_list) > 0 && !is.null(Y_residuals_current)) {
         U_NDX_Nuisance_Combined <- do.call(cbind, U_NDX_Nuisance_Combined_list)
         if (ncol(U_NDX_Nuisance_Combined) > 0) {
-            P_noise_basis <- qr.Q(qr(U_NDX_Nuisance_Combined))            
+            P_noise_basis <- qr.Q(qr(U_NDX_Nuisance_Combined))
             Resid_proj_noise <- P_noise_basis %*% (crossprod(P_noise_basis, Y_residuals_current))
             var_resid_proj_noise <- sum(Resid_proj_noise^2, na.rm = TRUE)
             var_total_resid <- sum(Y_residuals_current^2, na.rm = TRUE)
@@ -432,6 +440,11 @@ NDX_Process_Subject <- function(Y_fmri,
         pass_diagnostics$rho_noise_projection <- NA # Cannot calculate if no nuisance or no residuals
         if (verbose) message(sprintf("  Pass %d Rho Noise Projection: NA (no nuisance components or residuals)", pass_num))
     }
+
+    pass_diagnostics$k_rpca_global <- current_pass_results$k_rpca_global
+    pass_diagnostics$num_spectral_sines <- current_pass_results$num_spectral_sines
+    pass_diagnostics$lambda_parallel_noise <- current_pass_results$lambda_parallel_noise
+    pass_diagnostics$lambda_perp_signal <- current_pass_results$lambda_perp_signal
     
     pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
 
@@ -499,7 +512,9 @@ NDX_Process_Subject <- function(Y_fmri,
      rpca_components = current_pass_results$rpca_components,
      spectral_sines = current_pass_results$spectral_sines,
      estimated_hrfs = current_pass_results$estimated_hrfs, # From last pass
+     S_matrix_rpca_final = current_pass_results$S_matrix_rpca,
      pass0_vars = VAR_BASELINE_FOR_DES, # Original baseline variance
+     pass0_residuals = pass0_residuals,
      na_mask_whitening = current_pass_results$na_mask_whitening,
      spike_TR_mask = current_spike_TR_mask,
      X_full_design_final = current_pass_results$X_full_design, # From last pass

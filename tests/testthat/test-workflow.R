@@ -100,15 +100,17 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
   
   expected_names <- c(
     "final_task_betas", "Y_residuals_final_unwhitened", "ar_coeffs_voxelwise",
-    "rpca_components", "spectral_sines", "estimated_hrfs", "pass0_vars",
-    "na_mask_whitening", "spike_TR_mask", "X_full_design_final", "diagnostics_per_pass",
-    "beta_history_per_pass", "num_passes_completed"
+    "rpca_components", "spectral_sines", "estimated_hrfs", "S_matrix_rpca_final",
+    "pass0_vars", "pass0_residuals", "na_mask_whitening", "spike_TR_mask",
+    "X_full_design_final", "diagnostics_per_pass", "beta_history_per_pass",
+    "num_passes_completed"
   )
   expect_named(workflow_output, expected = expected_names, ignore.order = TRUE)
   
   # Basic dimension checks for key matrix outputs
   expect_equal(dim(workflow_output$Y_residuals_final_unwhitened), dim(Y_fmri_test))
   expect_true(is.numeric(workflow_output$pass0_vars) && length(workflow_output$pass0_vars) == 1)
+  expect_equal(dim(workflow_output$pass0_residuals), dim(Y_fmri_test))
   
   if (!is.null(workflow_output$X_full_design_final)) {
       expect_equal(nrow(workflow_output$X_full_design_final), total_timepoints_test)
@@ -137,10 +139,14 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
   # Check ar_coeffs if present
   if (!is.null(workflow_output$ar_coeffs_voxelwise)) {
       expect_true(is.matrix(workflow_output$ar_coeffs_voxelwise))
-      expect_equal(ncol(workflow_output$ar_coeffs_voxelwise), n_voxels_test)      
+      expect_equal(ncol(workflow_output$ar_coeffs_voxelwise), n_voxels_test)
       # Expect 2 rows for AR(2) coefficients, or 3 if intercept is included by ar.yw
       # ndx_ar2_whitening stores only the 2 AR coefficients. 
       expect_equal(nrow(workflow_output$ar_coeffs_voxelwise), 2)
+  }
+
+  if (!is.null(workflow_output$S_matrix_rpca_final)) {
+      expect_equal(dim(workflow_output$S_matrix_rpca_final), dim(Y_fmri_test))
   }
 
   # Add more specific checks as needed, e.g., for dimensions of rpca/spectral components,
