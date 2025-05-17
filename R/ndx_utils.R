@@ -41,7 +41,9 @@ calculate_residuals_ols <- function(Y, X) {
 
   # stats::lm.fit is efficient for multiple response variables (columns in Y)
   fit <- stats::lm.fit(X, Y)
-  return(fit$residuals)
+  res <- fit$residuals
+  dimnames(res) <- NULL
+  return(res)
 }
 
 #' Calculate Voxel-wise R-squared
