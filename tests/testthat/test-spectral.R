@@ -159,4 +159,23 @@ test_that("ndx_spectral_sines warns if k_tapers becomes < 1 after adjustment", {
     "k_tapers became 0 after adjustment"
   )
   expect_null(res)
-}) 
+})
+
+test_that("Select_Significant_Spectral_Regressors filters by BIC", {
+  set.seed(42)
+  TR_val <- 1
+  n_tp <- 200
+  t_sec <- (seq_len(n_tp) - 1) * TR_val
+  freq_good <- 0.05
+  freq_bad <- 0.20
+  y <- sin(2 * pi * freq_good * t_sec) + rnorm(n_tp, sd = 0.1)
+  U_good <- cbind(sin(2 * pi * freq_good * t_sec), cos(2 * pi * freq_good * t_sec))
+  U_bad  <- cbind(sin(2 * pi * freq_bad * t_sec), cos(2 * pi * freq_bad * t_sec))
+  U_all  <- cbind(U_good, U_bad)
+  colnames(U_all) <- paste0(c("sin_good","cos_good","sin_bad","cos_bad"))
+  attr(U_all, "freq_hz") <- c(freq_good, freq_bad)
+  selected <- Select_Significant_Spectral_Regressors(y, U_all, criterion = "BIC", delta_threshold = 2)
+  expect_true(!is.null(selected))
+  expect_equal(ncol(selected), 2)
+  expect_true(all(colnames(selected) %in% c("sin_good","cos_good")))
+})

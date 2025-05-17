@@ -180,8 +180,101 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   attr(U_spectral_sines, "freq_hz") <- selected_frequencies_hz
   attr(U_spectral_sines, "freq_rad_s") <- omega_rad_s
-  
-  message(sprintf("Generated %d sine/cosine pairs from %d spectral peaks.", 
+
+  message(sprintf("Generated %d sine/cosine pairs from %d spectral peaks.",
                   ncol(U_spectral_sines) / 2, length(selected_frequencies_hz)))
-  return(U_spectral_sines)
-} 
+
+  # Sprint 2 NDX-14: Apply BIC/AIC based selection
+  selected <- Select_Significant_Spectral_Regressors(
+    y = mean_residual_for_spectrum,
+    U_candidates = U_spectral_sines,
+    criterion = "BIC",
+    delta_threshold = 2
+  )
+
+  return(selected)
+}
+
+#' Select Spectral Regressors via Information Criterion
+#'
+#' Given a set of candidate sine/cosine regressors, iteratively add the pair
+#' that yields the largest improvement in BIC (or AIC) when regressing the
+#' provided time-series. Addition stops when no remaining pair improves the
+#' criterion by more than `delta_threshold`.
+#'
+#' @param y Numeric vector of data to be modeled (typically the mean residual
+#'   time series used to estimate the spectrum).
+#' @param U_candidates Matrix of sine/cosine regressors. Columns should come in
+#'   pairs (sine then cosine) corresponding to frequencies.
+#' @param criterion Character string, either "BIC" or "AIC". Default "BIC".
+#' @param delta_threshold Numeric, minimum decrease in the chosen information
+#'   criterion required to retain a candidate pair. Default 2.
+#' @return Matrix of selected regressors (or NULL if none selected). Attributes
+#'   "freq_hz" and "freq_rad_s" are propagated for the selected frequencies.
+#' @keywords internal
+#' @export
+Select_Significant_Spectral_Regressors <- function(y, U_candidates,
+                                                   criterion = c("BIC", "AIC"),
+                                                   delta_threshold = 2) {
+  if (is.null(U_candidates) || !is.matrix(U_candidates) || ncol(U_candidates) < 2)
+    return(NULL)
+  criterion <- match.arg(criterion)
+  n_pairs <- ncol(U_candidates) %/% 2
+  if (n_pairs < 1) return(NULL)
+
+  calc_ic <- function(y, X) {
+    fit <- stats::lm.fit(X, y)
+    rss <- sum(fit$residuals^2)
+    n <- length(y)
+    k <- ncol(X)
+    sigma2 <- rss / n
+    if (criterion == "BIC") {
+      n * log(sigma2) + k * log(n)
+    } else {
+      n * log(sigma2) + 2 * k
+    }
+  }
+
+  base_X <- matrix(1, nrow = length(y), ncol = 1)
+  base_ic <- calc_ic(y, base_X)
+  selected <- integer(0)
+  remaining <- seq_len(n_pairs)
+  current_X <- base_X
+
+  repeat {
+    best_ic <- Inf
+    best_pair <- NA
+    for (idx in remaining) {
+      cols <- (2 * (idx - 1) + 1):(2 * idx)
+      X_tmp <- cbind(current_X, U_candidates[, cols, drop = FALSE])
+      ic_val <- calc_ic(y, X_tmp)
+      if (ic_val < best_ic) {
+        best_ic <- ic_val
+        best_pair <- idx
+      }
+    }
+
+    if (is.na(best_pair)) break
+
+    if ((base_ic - best_ic) > delta_threshold) {
+      cols <- (2 * (best_pair - 1) + 1):(2 * best_pair)
+      current_X <- cbind(current_X, U_candidates[, cols, drop = FALSE])
+      base_ic <- best_ic
+      selected <- c(selected, best_pair)
+      remaining <- setdiff(remaining, best_pair)
+      if (length(remaining) == 0) break
+    } else {
+      break
+    }
+  }
+
+  if (length(selected) == 0) return(NULL)
+  cols_final <- unlist(lapply(selected, function(i) (2 * (i - 1) + 1):(2 * i)))
+  res <- U_candidates[, cols_final, drop = FALSE]
+  hz <- attr(U_candidates, "freq_hz")
+  rad <- attr(U_candidates, "freq_rad_s")
+  if (!is.null(hz)) attr(res, "freq_hz") <- hz[selected]
+  if (!is.null(rad)) attr(res, "freq_rad_s") <- rad[selected]
+  attr(res, "selected_pair_indices") <- selected
+  res
+}
