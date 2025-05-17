@@ -1,8 +1,9 @@
-#' Run a Single Pass of the ND-X Sprint 1 Denoising Workflow
+#' Process a Single Subject through the Full ND-X Iterative Denoising Workflow
 #'
-#' This function orchestrates the core modules of the ND-X pipeline developed in Sprint 1.
-#' It performs initial residual generation, FIR HRF estimation, nuisance component
-#' identification (RPCA and Spectral), AR(2) pre-whitening, and ridge regression.
+#' This function orchestrates the core modules of the ND-X pipeline. 
+#' It iteratively performs initial residual generation, FIR HRF estimation, 
+#' nuisance component identification (RPCA and Spectral), AR(2) pre-whitening, 
+#' and ridge regression until convergence or max passes.
 #'
 #' @param Y_fmri A numeric matrix of fMRI data (total_timepoints x voxels), concatenated across runs if applicable.
 #' @param events A data frame describing experimental events. Must contain columns compatible
@@ -22,23 +23,20 @@
 #'   - `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
 #'   - `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
 #'   - `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
+#'   - `max_passes` (integer): Maximum number of iterations for the refinement loop. Default: 3.
+#'   - `min_des_gain_convergence` (numeric): Minimum DES gain to continue iteration. Default: 0.005.
+#'   - `min_rho_noise_projection_convergence` (numeric): Minimum rho noise projection to continue iteration. Default: 0.01. 
 #' @param verbose Logical, if TRUE, print progress messages. Default: TRUE.
 #'
 #' @return A list containing key outputs from the workflow, such as:
-#'   - `final_task_betas`: Extracted task betas after ridge regression.
-#'   - `Y_residuals_whitened`: Residuals after whitening and ridge regression.
-#'   - `Y_residuals_pass0`: Residuals from the initial GLM fit.
-#'   - `ar_coeffs_voxelwise`: Voxelwise AR(2) coefficients.
-#'   - `rpca_components`: Temporal components from RPCA.
-#'   - `spectral_sines`: Sine/cosine components from spectral analysis.
-#'   - `estimated_hrfs`: Table of estimated FIR HRFs.
-#'   - `pass0_vars`: Baseline variance from initial GLM for DES calculation.
-#'   - `na_mask_whitening`: Mask of NAs introduced by AR(2) whitening filter.
-#'   - `X_full_design`: The constructed design matrix.
+#'   - `final_task_betas`: Extracted task betas after the final pass.
+#'   - `diagnostics_per_pass`: A list of diagnostic metrics for each pass.
+#'   - `beta_history_per_pass`: A list of beta estimates from each pass.
+#'   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
-#' @export
-ndx_run_sprint1 <- function(Y_fmri,
+#' @export NDX_Process_Subject
+NDX_Process_Subject <- function(Y_fmri,
                               events,
                               motion_params,
                               run_idx,
@@ -47,13 +45,16 @@ ndx_run_sprint1 <- function(Y_fmri,
                               user_options = list(),
                               verbose = TRUE) {
 
-  if (verbose) message("Starting ND-X Sprint 1 Workflow...")
+  if (verbose) message("Starting ND-X Processing for Subject...")
 
   # --- 0. Validate inputs and merge default user_options --- 
-  # (To be implemented: validate inputs, set up default options for each sub-module if not provided)
-  
-  # Default options for HRF estimation
-  opts_pass0       <- user_options$opts_pass0 %||% list()
+  # Default general workflow options
+  max_passes <- user_options$max_passes %||% 3L
+  min_des_gain_convergence <- user_options$min_des_gain_convergence %||% 0.005
+  min_rho_noise_projection_convergence <- user_options$min_rho_noise_projection_convergence %||% 0.01
+
+  # Default options for sub-modules (can be centralized or handled per module call)
+  opts_pass0       <- user_options$opts_pass0 %||% list(poly_degree = 1) # Ensure poly_degree is available for build_design_matrix
 
   default_opts_hrf <- list(
     hrf_fir_taps = 12L,
@@ -63,7 +64,10 @@ ndx_run_sprint1 <- function(Y_fmri,
     lambda1_grid = 10^seq(-2, 1, length.out = 5),
     lambda2_grid = 10^seq(-3, 0, length.out = 5),
     hrf_min_good_voxels = 50L,
-    return_full_model = FALSE
+    return_full_model = FALSE,
+    # Add missing options that caused test failures
+    hrf_cluster_method = "none", # Default to no clustering for initial pass logic
+    num_hrf_clusters = 1 # Consistent with no clustering
   )
   opts_hrf <- utils::modifyList(default_opts_hrf, user_options$opts_hrf %||% list())
 
@@ -73,139 +77,304 @@ ndx_run_sprint1 <- function(Y_fmri,
   opts_ridge       <- user_options$opts_ridge %||% list()
   task_regressor_names <- user_options$task_regressor_names_for_extraction %||% character(0)
   
-  # Initialize a list to store results
-  results <- list()
-
-  # --- 1. Initial GLM: Residual Generation (NDX-2) ---
-  if (verbose) message("Step 1: Running Initial GLM for residual generation...")
-  initial_glm_output <- ndx_initial_glm(
-    Y_fmri = Y_fmri,
-    events = events,
-    motion_params = motion_params,
-    run_idx = run_idx,
-    TR = TR
-  )
-  results$Y_residuals_pass0 <- initial_glm_output$Y_residuals_current
-  results$pass0_vars <- initial_glm_output$VAR_BASELINE_FOR_DES
+  # Initialize storage for per-pass results
+  diagnostics_per_pass <- list()
+  beta_history_per_pass <- list()
+  Y_residuals_current <- NULL # Will hold residuals from the previous pass
+  VAR_BASELINE_FOR_DES <- NULL # From initial GLM
   
-  # --- 2. HRF Estimation (NDX-3) ---
-  if (verbose) message("Step 2: Estimating initial FIR HRFs...")
-  estimated_hrfs <- ndx_estimate_initial_hrfs(
-    Y_fmri = Y_fmri, 
-    pass0_residuals = initial_glm_output$Y_residuals_current, 
-    events = events, 
-    run_idx = run_idx, 
-    TR = TR, 
-    spike_TR_mask = spike_TR_mask, 
-    user_options = opts_hrf
-  )
-  results$estimated_hrfs <- estimated_hrfs
+  # --- Iterative Refinement Loop (NDX-11) ---
+  for (pass_num in 1:max_passes) {
+    if (verbose) message(sprintf("\n--- Starting ND-X Pass %d/%d ---", pass_num, max_passes))
+    
+    current_pass_results <- list()
 
-  # --- 3. RPCA Nuisance Components (NDX-4) ---
-  if (verbose) message("Step 3: Identifying RPCA nuisance components...")
-  k_rpca_global <- opts_rpca$k_global_target %||% 5 # Example default
-  rpca_components <- ndx_rpca_temporal_components_multirun(
-    Y_residuals_cat = initial_glm_output$Y_residuals_current,
-    run_idx = run_idx,
-    k_global_target = k_rpca_global,
-    user_options = opts_rpca
-  )
-  results$rpca_components <- rpca_components
-
-  # --- 4. Spectral Nuisance Components (NDX-5) ---
-  if (verbose) message("Step 4: Identifying spectral nuisance components...")
-  if (!is.null(initial_glm_output$Y_residuals_current) && ncol(initial_glm_output$Y_residuals_current) > 0) {
-    mean_residual_for_spectrum <- rowMeans(initial_glm_output$Y_residuals_current, na.rm = TRUE)
-    spectral_sines <- ndx_spectral_sines(
-      mean_residual_for_spectrum = mean_residual_for_spectrum,
-      TR = TR,
-      n_sine_candidates = opts_spectral$n_sine_candidates %||% 10,
-      nyquist_guard_factor = opts_spectral$nyquist_guard_factor %||% 0.9,
-      k_tapers = opts_spectral$k_tapers %||% 5,
-      nw = opts_spectral$nw %||% 3
-    )
-    results$spectral_sines <- spectral_sines
-  } else {
-    if (verbose) message("  Skipping spectral analysis due to no Pass0 residuals or no voxels.")
-    results$spectral_sines <- NULL
-  }
-
-  # --- 5. Construct Full Design Matrix for Whitening/Ridge --- 
-  if (verbose) message("Step 5: Constructing full design matrix...")
-  
-  X_full_design <- ndx_build_design_matrix(
-    estimated_hrfs = results$estimated_hrfs,
-    events = events,
-    motion_params = motion_params,
-    rpca_components = results$rpca_components,
-    spectral_sines = results$spectral_sines,
-    run_idx = run_idx,
-    TR = TR,
-    poly_degree_val = opts_pass0$poly_degree, # poly_degree comes from opts_pass0
-    verbose = verbose
-  )
-  results$X_full_design <- X_full_design
-  
-  # --- 6. AR(2) Pre-whitening (NDX-6) ---
-  if (verbose) message("Step 6: Performing AR(2) pre-whitening...")
-  if (!is.null(X_full_design)) {
-    whitening_output <- ndx_ar2_whitening(
-      Y_data = Y_fmri,
-      X_design_full = X_full_design,
-      Y_residuals_for_AR_fit = initial_glm_output$Y_residuals_current,
-      order = opts_whitening$order %||% 2L,
-      global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE
-      # Removed deprecated max_ar_failures_prop
-    )
-    results$Y_whitened <- whitening_output$Y_whitened
-    results$X_whitened <- whitening_output$X_whitened
-    results$ar_coeffs_voxelwise <- whitening_output$ar_coeffs_voxelwise
-    results$na_mask_whitening <- whitening_output$na_mask
-  } else {
-    if (verbose) message("  Skipping AR(2) whitening as X_full_design is NULL.")
-    results$Y_whitened <- Y_fmri # Pass through unwhitened for ridge if X_full_design was missing
-    results$X_whitened <- X_full_design # Will be NULL
-    results$ar_coeffs_voxelwise <- NULL
-    results$na_mask_whitening <- rep(FALSE, nrow(Y_fmri))
-  }
-
-  # --- 7. Ridge Regression (NDX-7) ---
-  if (verbose) message("Step 7: Performing Ridge Regression...")
-  if (!is.null(results$X_whitened) && !is.null(results$Y_whitened)) {
-    ridge_betas_whitened <- ndx_solve_ridge(
-      Y_whitened = results$Y_whitened,
-      X_whitened = results$X_whitened,
-      lambda_ridge = opts_ridge$lambda_ridge %||% 1.0, # Example default
-      na_mask = results$na_mask_whitening
-    )
-    results$ridge_betas_whitened <- ridge_betas_whitened
-
-    # Extract task betas
-    if (!is.null(ridge_betas_whitened) && length(task_regressor_names) > 0) {
-      final_task_betas <- ndx_extract_task_betas(
-        betas_whitened = ridge_betas_whitened,
-        X_whitened_colnames = colnames(results$X_whitened), 
-        task_regressor_names = task_regressor_names,
-        ar_coeffs_global = NULL # Unwhitening deferred beyond Sprint 1
+    # --- 1. Initial GLM (Pass 0 equivalent, or using residuals from previous ND-X pass) ---
+    if (pass_num == 1) {
+      if (verbose) message(sprintf("Pass %d: Running Initial GLM for residual generation...", pass_num))
+      initial_glm_output <- ndx_initial_glm(
+        Y_fmri = Y_fmri,
+        events = events,
+        motion_params = motion_params, # Initial GLM uses original motion params
+        run_idx = run_idx,
+        TR = TR
       )
-      results$final_task_betas <- final_task_betas
+      Y_residuals_current <- initial_glm_output$Y_residuals_current
+      VAR_BASELINE_FOR_DES <- initial_glm_output$VAR_BASELINE_FOR_DES # Store for all DES calculations
+      current_pass_results$Y_residuals_from_glm <- Y_residuals_current
+      current_pass_results$pass0_vars <- VAR_BASELINE_FOR_DES
     } else {
-      results$final_task_betas <- NULL
+      if (verbose) message(sprintf("Pass %d: Using residuals from Pass %d.", pass_num, pass_num - 1))
+      # Y_residuals_current is already set from the end of the previous pass
+      if (is.null(Y_residuals_current)) {
+          warning(sprintf("Pass %d: Y_residuals_current is NULL. Cannot proceed. Stopping iterations.", pass_num))
+          break # Stop iteration
+      }
     }
     
-    # Placeholder for whitened residuals after ridge
-    # Y_residuals_whitened = Y_whitened - X_whitened %*% ridge_betas_whitened
-    # results$Y_residuals_whitened <- Y_residuals_whitened 
+    # --- 2. HRF Estimation (NDX-3 / NDX-12) ---
+    # For Sprint 2 NDX-12, this will become more complex with clustering and auto-adaptation.
+    # For now, retain single global HRF estimation logic from Sprint 1.
+    if (verbose) message(sprintf("Pass %d: Estimating FIR HRFs...", pass_num))
+    estimated_hrfs <- ndx_estimate_initial_hrfs(
+      Y_fmri = Y_fmri, 
+      pass0_residuals = Y_residuals_current, # Use current residuals for good voxel selection
+      events = events, 
+      run_idx = run_idx, 
+      TR = TR, 
+      spike_TR_mask = spike_TR_mask, # Pass this through
+      user_options = opts_hrf
+    )
+    current_pass_results$estimated_hrfs <- estimated_hrfs
+    if (is.null(estimated_hrfs) && verbose) {
+        message(sprintf("Pass %d: HRF estimation returned NULL. Subsequent steps might be affected.", pass_num))
+    }
 
-  } else {
-    if (verbose) message("  Skipping Ridge Regression due to missing whitened data/design.")
-    results$ridge_betas_whitened <- NULL
-    results$final_task_betas <- NULL
-  }
+    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13) ---
+    # For Sprint 2 NDX-13, k_rpca_global will be adaptive.
+    if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
+    k_rpca_global <- opts_rpca$k_global_target %||% 5 
+    rpca_components <- ndx_rpca_temporal_components_multirun(
+      Y_residuals_cat = Y_residuals_current,
+      run_idx = run_idx,
+      k_global_target = k_rpca_global,
+      user_options = opts_rpca
+    )
+    current_pass_results$rpca_components <- rpca_components
+
+    # --- 4. Spectral Nuisance Components (NDX-5 / NDX-14) ---
+    # For Sprint 2 NDX-14, selection will be BIC/AIC based.
+    if (verbose) message(sprintf("Pass %d: Identifying spectral nuisance components...", pass_num))
+    if (!is.null(Y_residuals_current) && ncol(Y_residuals_current) > 0) {
+      mean_residual_for_spectrum <- rowMeans(Y_residuals_current, na.rm = TRUE)
+      spectral_sines <- ndx_spectral_sines(
+        mean_residual_for_spectrum = mean_residual_for_spectrum,
+        TR = TR,
+        n_sine_candidates = opts_spectral$n_sine_candidates %||% 10,
+        nyquist_guard_factor = opts_spectral$nyquist_guard_factor %||% 0.9,
+        k_tapers = opts_spectral$k_tapers %||% 5,
+        nw = opts_spectral$nw %||% 3
+      )
+      current_pass_results$spectral_sines <- spectral_sines
+    } else {
+      if (verbose) message(sprintf("  Pass %d: Skipping spectral analysis due to no/empty residuals.", pass_num))
+      current_pass_results$spectral_sines <- NULL
+    }
+
+    # --- 5. Construct Full Design Matrix (using ndx_build_design_matrix) --- 
+    if (verbose) message(sprintf("Pass %d: Constructing full design matrix...", pass_num))
+    X_full_design <- ndx_build_design_matrix(
+      estimated_hrfs = current_pass_results$estimated_hrfs,
+      events = events,
+      motion_params = motion_params, # Original motion params are part of the base model always
+      rpca_components = current_pass_results$rpca_components, # From current pass
+      spectral_sines = current_pass_results$spectral_sines,   # From current pass
+      run_idx = run_idx,
+      TR = TR,
+      poly_degree = opts_pass0$poly_degree, # From initial GLM setup
+      verbose = FALSE # Reduce verbosity for internal calls
+    )
+    current_pass_results$X_full_design <- X_full_design
+    
+    # --- 6. AR(2) Pre-whitening (NDX-6) ---
+    if (verbose) message(sprintf("Pass %d: Performing AR(2) pre-whitening...", pass_num))
+    if (!is.null(X_full_design)) {
+      # Residuals for AR fit should be from a GLM using X_full_design on Y_fmri (unwhitened)
+      # This is a deviation from Sprint 1 where Y_residuals_pass0 was used.
+      # For iterative refinement, AR model should be based on current best model residuals.
+      temp_glm_for_ar_residuals <- tryCatch({
+        stats::lm.fit(X_full_design, Y_fmri)$residuals
+      }, error = function(e) {
+        if(verbose) message(sprintf("  Pass %d: Error fitting temporary GLM for AR residuals: %s. Using Y_residuals_current for AR fit.", pass_num, e$message))
+        Y_residuals_current # Fallback
+      })
+      
+      whitening_output <- ndx_ar2_whitening(
+        Y_data = Y_fmri,
+        X_design_full = X_full_design,
+        Y_residuals_for_AR_fit = temp_glm_for_ar_residuals,
+        order = opts_whitening$order %||% 2L,
+        global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE
+      )
+      current_pass_results$Y_whitened <- whitening_output$Y_whitened
+      current_pass_results$X_whitened <- whitening_output$X_whitened
+      current_pass_results$ar_coeffs_voxelwise <- whitening_output$ar_coeffs_voxelwise
+      current_pass_results$na_mask_whitening <- whitening_output$na_mask
+    } else {
+      if (verbose) message(sprintf("  Pass %d: Skipping AR(2) whitening as X_full_design is NULL.", pass_num))
+      current_pass_results$Y_whitened <- Y_fmri 
+      current_pass_results$X_whitened <- X_full_design 
+      current_pass_results$ar_coeffs_voxelwise <- NULL
+      current_pass_results$na_mask_whitening <- rep(FALSE, nrow(Y_fmri))
+    }
+
+    # --- 7. Ridge Regression (NDX-7 / NDX-16 Anisotropic Ridge) ---
+    # For Sprint 2 NDX-16, this will be ndx_solve_anisotropic_ridge.
+    if (verbose) message(sprintf("Pass %d: Performing Ridge Regression...", pass_num))
+    if (!is.null(current_pass_results$X_whitened) && !is.null(current_pass_results$Y_whitened)) {
+      ridge_betas_whitened <- ndx_solve_ridge(
+        Y_whitened = current_pass_results$Y_whitened,
+        X_whitened = current_pass_results$X_whitened,
+        lambda_ridge = opts_ridge$lambda_ridge %||% 1.0, 
+        na_mask = current_pass_results$na_mask_whitening
+      )
+      current_pass_results$ridge_betas_whitened <- ridge_betas_whitened
+      beta_history_per_pass[[pass_num]] <- ridge_betas_whitened # Store betas for this pass
+
+      # Extract task betas
+      if (!is.null(ridge_betas_whitened) && length(task_regressor_names) > 0) {
+        final_task_betas_pass <- ndx_extract_task_betas(
+          betas_whitened = ridge_betas_whitened,
+          X_whitened_colnames = colnames(current_pass_results$X_whitened), 
+          task_regressor_names = task_regressor_names,
+          ar_coeffs_global = NULL 
+        )
+        current_pass_results$final_task_betas_pass <- final_task_betas_pass
+      } else {
+        current_pass_results$final_task_betas_pass <- NULL
+      }
+      
+      # Calculate residuals for this pass (unwhitened, for DES and next pass input)
+      if(!is.null(X_full_design) && !is.null(ridge_betas_whitened)) {
+          Y_predicted_unwhitened = X_full_design %*% ridge_betas_whitened # Using original X_full_design
+          Y_residuals_current = Y_fmri - Y_predicted_unwhitened # Update Y_residuals_current for next pass
+          current_pass_results$Y_residuals_final_unwhitened <- Y_residuals_current
+      } else {
+          Y_residuals_current <- NULL # Cannot compute if parts are missing
+          current_pass_results$Y_residuals_final_unwhitened <- Y_residuals_current
+      }
+
+    } else {
+      if (verbose) message(sprintf("  Pass %d: Skipping Ridge Regression due to missing whitened data/design.", pass_num))
+      current_pass_results$ridge_betas_whitened <- NULL
+      current_pass_results$final_task_betas_pass <- NULL
+      beta_history_per_pass[[pass_num]] <- NULL
+      Y_residuals_current <- NULL # Reset if ridge failed
+      current_pass_results$Y_residuals_final_unwhitened <- Y_residuals_current
+    }
+    
+    # --- 8. Calculate Diagnostics for this Pass (NDX-9 / NDX-18) ---
+    if (verbose) message(sprintf("Pass %d: Calculating diagnostics...", pass_num))
+    pass_diagnostics <- list()
+    
+    # Calculate DES
+    if (!is.null(Y_residuals_current) && !is.null(VAR_BASELINE_FOR_DES)) {
+        pass_diagnostics$DES <- calculate_DES(current_residuals_unwhitened = Y_residuals_current, 
+                                              VAR_BASELINE_FOR_DES = VAR_BASELINE_FOR_DES)
+        if (verbose) message(sprintf("  Pass %d DES: %.4f", pass_num, pass_diagnostics$DES))
+    } else {
+        pass_diagnostics$DES <- NA
+        if (verbose) message(sprintf("  Pass %d DES: NA (missing residuals or baseline variance)", pass_num))
+    }
+    
+    # Calculate Rho Noise Projection
+    U_NDX_Nuisance_Combined_list <- list()
+    if (!is.null(current_pass_results$rpca_components) && ncol(current_pass_results$rpca_components) > 0) {
+        U_NDX_Nuisance_Combined_list$rpca <- current_pass_results$rpca_components
+    }
+    if (!is.null(current_pass_results$spectral_sines) && ncol(current_pass_results$spectral_sines) > 0) {
+        U_NDX_Nuisance_Combined_list$spectral <- current_pass_results$spectral_sines
+    }
+    
+    if (length(U_NDX_Nuisance_Combined_list) > 0 && !is.null(Y_residuals_current)) {
+        U_NDX_Nuisance_Combined <- do.call(cbind, U_NDX_Nuisance_Combined_list)
+        if (ncol(U_NDX_Nuisance_Combined) > 0) {
+            P_noise_basis <- qr.Q(qr(U_NDX_Nuisance_Combined))            
+            Resid_proj_noise <- P_noise_basis %*% (crossprod(P_noise_basis, Y_residuals_current))
+            var_resid_proj_noise <- sum(Resid_proj_noise^2, na.rm = TRUE)
+            var_total_resid <- sum(Y_residuals_current^2, na.rm = TRUE)
+            if (var_total_resid > 1e-9) { # Avoid division by zero if residuals are flat zero
+                pass_diagnostics$rho_noise_projection <- var_resid_proj_noise / var_total_resid
+            } else {
+                pass_diagnostics$rho_noise_projection <- 0 # Or NA, if residuals are zero, no variance projects anywhere
+            }
+            if (verbose) message(sprintf("  Pass %d Rho Noise Projection: %.4f", pass_num, pass_diagnostics$rho_noise_projection %||% NA_real_))
+        } else {
+            pass_diagnostics$rho_noise_projection <- 0 # No nuisance components to project onto
+            if (verbose) message(sprintf("  Pass %d Rho Noise Projection: 0 (no combined nuisance components)", pass_num))
+        }
+    } else {
+        pass_diagnostics$rho_noise_projection <- NA # Cannot calculate if no nuisance or no residuals
+        if (verbose) message(sprintf("  Pass %d Rho Noise Projection: NA (no nuisance components or residuals)", pass_num))
+    }
+    
+    # Add other diagnostics: lambda_parallel used etc. (placeholder for NDX-16)
+    # pass_diagnostics$lambda_parallel <- current_pass_results$lambda_parallel_used 
+
+    diagnostics_per_pass[[pass_num]] <- pass_diagnostics
+    
+    # --- 9. Convergence Check ---
+    if (pass_num > 1) {
+      converged_des <- FALSE
+      converged_rho <- FALSE
+      
+      # DES gain check
+      prev_DES <- diagnostics_per_pass[[pass_num - 1]]$DES
+      current_DES <- pass_diagnostics$DES
+      if (!is.na(prev_DES) && !is.na(current_DES)) {
+        des_gain <- current_DES - prev_DES
+        if (verbose) message(sprintf("  Pass %d DES gain: %.4f", pass_num, des_gain))
+        if (des_gain < min_des_gain_convergence) {
+          if (verbose) message(sprintf("  Convergence potentially met based on DES gain (%.4f < %.4f).", des_gain, min_des_gain_convergence))
+          converged_des <- TRUE
+        }
+      } else {
+        if (verbose) message("  Pass %d: Cannot check DES convergence due to NA DES values.")
+        # If DES cannot be calculated, perhaps don't consider it converged based on DES.
+      }
+      
+      # Rho noise projection check
+      current_rho <- pass_diagnostics$rho_noise_projection
+      if (!is.na(current_rho)) {
+        if (verbose) message(sprintf("  Pass %d Current Rho Noise Projection: %.4f", pass_num, current_rho))
+        if (current_rho < min_rho_noise_projection_convergence) {
+          if (verbose) message(sprintf("  Convergence potentially met based on Rho Noise Projection (%.4f < %.4f).", current_rho, min_rho_noise_projection_convergence))
+          converged_rho <- TRUE
+        }
+      } else {
+          if (verbose) message("  Pass %d: Cannot check Rho convergence due to NA Rho value.")
+      }
+      
+      # Stop if *either* convergence criterion is met and considered sufficient
+      # Proposal: "Iteration stops if Denoising Efficacy Score (DES) gain is marginal (<0.5%) OR RHO?"
+      # For now, let's assume if DES gain is too small, we stop. Rho is more for lambda adjustment.
+      # Ticket NDX-11 says: "Implement convergence checks based on MIN_DES_GAIN_CONVERGENCE and MIN_RHO_NOISE_PROJECTION_CONVERGENCE"
+      # This implies both could lead to stopping. Let's use OR for now: if DES gain is too small OR rho is small enough.
+      if (converged_des || converged_rho) {
+           if (verbose) message (sprintf("  Convergence criteria met (DES gain low: %s, Rho low: %s). Stopping iterations.", converged_des, converged_rho))
+           break
+      }
+
+    }
+    if (is.null(Y_residuals_current)) {
+        if (verbose) message(sprintf("Pass %d: Y_residuals_current became NULL after ridge/residual calculation. Stopping iteration.", pass_num))
+        break
+    }
+
+  } # End FOR loop (passes)
   
-  # --- 8. Finalize and Return --- 
-  if (verbose) message("ND-X Sprint 1 Workflow finished.")
-  return(results)
+  # --- Finalize and Return --- 
+  # Select results from the last successful pass or handle overall results structure
+  final_results <- list(
+     # Populate with outputs from the *last completed pass* stored in current_pass_results
+     # or potentially the best pass based on DES if passes vary widely.
+     # For now, just using last pass outputs.
+     final_task_betas = current_pass_results$final_task_betas_pass,
+     Y_residuals_final_unwhitened = current_pass_results$Y_residuals_final_unwhitened,
+     ar_coeffs_voxelwise = current_pass_results$ar_coeffs_voxelwise,
+     rpca_components = current_pass_results$rpca_components,
+     spectral_sines = current_pass_results$spectral_sines,
+     estimated_hrfs = current_pass_results$estimated_hrfs, # From last pass
+     pass0_vars = VAR_BASELINE_FOR_DES, # Original baseline variance
+     na_mask_whitening = current_pass_results$na_mask_whitening,
+     X_full_design_final = current_pass_results$X_full_design, # From last pass
+     diagnostics_per_pass = diagnostics_per_pass,
+     beta_history_per_pass = beta_history_per_pass,
+     num_passes_completed = pass_num
+  )
+  
+  if (verbose) message("ND-X Subject Processing finished.")
+  return(final_results)
 }
 
 # Helper for default options, similar to base R's %||%

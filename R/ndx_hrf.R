@@ -195,49 +195,60 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
 #' @keywords internal
 get_fir_design_matrix_for_condition <- function(condition_name, events_df,
                                                 sampling_frame, fir_taps, TR) {
-  if (nrow(events_df) == 0) {
-    return(matrix(0, nrow = sampling_frame$total_samples, ncol = fir_taps))
+  
+  total_timepoints <- sampling_frame$total_samples
+  
+  if (nrow(events_df) == 0 || fir_taps == 0) {
+    # If no events or no FIR taps requested, return a zero matrix of correct dimensions
+    # This is important for consistency if other conditions *do* produce regressors.
+    return(matrix(0, nrow = total_timepoints, ncol = fir_taps))
   }
   
-  safe_cond_name <- make.names(condition_name, unique = FALSE)
-  fir_span <- fir_taps * TR 
-  
-  if (safe_cond_name != condition_name) {
-    formula_term <- sprintf("fmrireg::hrf(`%s`, basis=\"tent\", nbasis=%d, span=%.2f)", 
-                            condition_name, fir_taps, fir_span)
-  } else {
-    formula_term <- sprintf("fmrireg::hrf(%s, basis=\"tent\", nbasis=%d, span=%.2f)", 
-                            condition_name, fir_taps, fir_span)
-  }
-  
-  model_formula_str <- paste("~", formula_term)
-  model_formula <- as.formula(model_formula_str)
-  
-  ev_model <- fmrireg::event_model(model_formula,
-                                 data = events_df, 
-                                 block = events_df$blockids,
-                                 sampling_frame = sampling_frame,
-                                 drop_empty = FALSE) 
-  
-  X_fir <- fmrireg::design_matrix(ev_model)
-  
-  if (ncol(X_fir) != fir_taps) {
-      if (ncol(X_fir) == fir_taps + 1 && all(X_fir[,1] == 1)) { 
-          warning(sprintf("FIR design for %s included an intercept; removing it.", condition_name))
-          X_fir <- X_fir[, -1, drop=FALSE]
-      } else if (ncol(X_fir) == 0 && fir_taps > 0 && nrow(events_df) > 0) {
-          warning(sprintf("FIR design for %s (with %d events) resulted in 0 columns. Expected %d. Check event timings relative to scan length and FIR span. Returning zeros.", 
-                          condition_name, nrow(events_df), fir_taps))
-          return(matrix(0, nrow = sampling_frame$total_samples, ncol = fir_taps))
-      } else if (ncol(X_fir) != fir_taps && nrow(events_df) > 0) {
-        stop(sprintf("FIR design for %s has %d columns, expected %d. FIR span %.2f. Events: %d. Check event data relative to FIR parameters and scan times.", 
-                     condition_name, ncol(X_fir), fir_taps, fir_span, nrow(events_df)))
-      } else if (ncol(X_fir) == 0 && fir_taps > 0 && nrow(events_df) == 0) {
-         return(matrix(0, nrow = sampling_frame$total_samples, ncol = fir_taps))
+  # Manual FIR basis matrix construction (similar to .ndx_generate_task_regressors)
+  X_fir_basis_cond <- matrix(0, nrow = total_timepoints, ncol = fir_taps)
+  fir_colnames <- paste0(make.names(condition_name), "_FIRbasis", 0:(fir_taps-1)) # Unique basis names
+  colnames(X_fir_basis_cond) <- fir_colnames
+
+  current_run_offset <- 0 # To handle timepoints across concatenated runs
+  for (run_idx_val in 1:length(sampling_frame$blocklens)) {
+    run_length_tps <- sampling_frame$blocklens[run_idx_val]
+    run_start_tp_global <- current_run_offset + 1
+    run_end_tp_global <- current_run_offset + run_length_tps
+    
+    run_events <- events_df[events_df$blockids == run_idx_val, , drop = FALSE]
+
+    if (nrow(run_events) > 0) {
+      for (ev_idx in 1:nrow(run_events)) {
+        event_onset_sec <- run_events$onsets[ev_idx]
+        event_onset_tr_global_0idx <- floor(event_onset_sec / TR) + (run_start_tp_global - 1)
+
+        for (tap_idx in 0:(fir_taps - 1)) { # 0-indexed tap
+          target_timepoint_0idx <- event_onset_tr_global_0idx + tap_idx
+          target_timepoint_1idx <- target_timepoint_0idx + 1
+
+          if (target_timepoint_1idx >= run_start_tp_global && 
+              target_timepoint_1idx <= run_end_tp_global && 
+              target_timepoint_1idx <= total_timepoints) {
+            X_fir_basis_cond[target_timepoint_1idx, tap_idx + 1] <- 1
+          }
+        }
       }
+    }
+    current_run_offset <- current_run_offset + run_length_tps
   }
   
-  return(X_fir)
+  # The original function had checks for ncol(X_fir) != fir_taps
+  # With manual construction, this should always match if fir_taps > 0.
+  # If fir_taps was 0, we returned a 0-col matrix earlier.
+  if (ncol(X_fir_basis_cond) != fir_taps) {
+      # This case should ideally not be reached if fir_taps > 0 due to pre-allocation
+      warning(sprintf("Manual FIR design for %s has %d columns, expected %d. This is unexpected.", 
+                      condition_name, ncol(X_fir_basis_cond), fir_taps))
+      # Fallback to a zero matrix of correct dimensions if something went very wrong
+      return(matrix(0, nrow = total_timepoints, ncol = fir_taps, dimnames=list(NULL, fir_colnames))) 
+  }
+  
+  return(X_fir_basis_cond)
 }
 
 #' Basic Cone Projection Heuristic for FIR Coefficients
