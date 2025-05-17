@@ -115,3 +115,46 @@ ndx_generate_html_report <- function(workflow_output,
   writeLines(html_lines, con = html_path)
   invisible(html_path)
 }
+
+#' Generate "ND-X Certified Clean" JSON Sidecar
+#'
+#' This function creates a JSON file summarizing key diagnostic metrics and
+#' adaptive hyperparameters from an ND-X run. The JSON structure follows the
+#' specification described in the ND-X proposal and is intended to be consumed
+#' by downstream tools.
+#'
+#' @param workflow_output List returned by `NDX_Process_Subject`.
+#' @param output_path File path to save the JSON sidecar. Defaults to
+#'   "sub-ndx.json" in the current working directory.
+#' @return Invisibly, the path to the written JSON file.
+#' @export ndx_generate_json_certificate
+ndx_generate_json_certificate <- function(workflow_output,
+                                          output_path = "sub-ndx.json") {
+  if (is.null(workflow_output) || !is.list(workflow_output)) {
+    stop("workflow_output must be a list from NDX_Process_Subject")
+  }
+  if (is.null(workflow_output$diagnostics_per_pass) ||
+      length(workflow_output$diagnostics_per_pass) == 0) {
+    stop("workflow_output$diagnostics_per_pass is missing")
+  }
+
+  last_diag <- workflow_output$diagnostics_per_pass[[workflow_output$num_passes_completed]]
+
+  val_or_na <- function(x) if (is.null(x)) NA else x
+
+  cert_list <- list(
+    ndx_version = as.character(utils::packageVersion("ndx")),
+    final_DES = val_or_na(last_diag$DES),
+    num_passes_converged = val_or_na(workflow_output$num_passes_completed),
+    final_rho_noise_projection = val_or_na(last_diag$rho_noise_projection),
+    final_adaptive_hyperparameters = list(
+      k_rpca_global = val_or_na(last_diag$k_rpca_global),
+      num_spectral_sines = val_or_na(last_diag$num_spectral_sines),
+      lambda_parallel_noise = val_or_na(last_diag$lambda_parallel_noise),
+      lambda_perp_signal = val_or_na(last_diag$lambda_perp_signal)
+    )
+  )
+
+  jsonlite::write_json(cert_list, output_path, pretty = TRUE, auto_unbox = TRUE)
+  invisible(output_path)
+}
