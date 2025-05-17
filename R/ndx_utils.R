@@ -278,3 +278,29 @@ ndx_orthogonalize_matrix_against_basis <- function(target_matrix, basis_matrix, 
 
   return(orthogonalized_matrix)
 }
+
+#' Merge Two Lists with Defaults
+#'
+#' Wrapper around `utils::modifyList` that also handles `NULL` user lists.
+#'
+#' @param defaults A list of default values.
+#' @param user User-supplied options.
+#' @return Combined list.
+#' @keywords internal
+#' @export
+merge_lists <- function(defaults, user) {
+  utils::modifyList(defaults, if (is.null(user)) list() else user)
+}
+
+#' Null-Coalescing Operator
+#'
+#' Return `b` when `a` is `NULL`, otherwise `a`.
+#'
+#' @param a First value.
+#' @param b Fallback value.
+#' @keywords internal
+#' @export
+`%||%` <- function(a, b) {
+  if (is.null(a)) b else a
+}
+
