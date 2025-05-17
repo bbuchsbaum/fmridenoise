@@ -12,13 +12,16 @@
 #' @param TR Numeric repetition time (seconds) for frequency axis in the PSD plot.
 #' @param output_dir Directory in which to save the HTML file and PNG figures.
 #' @param filename Name of the HTML file to create. Default "ndx_diagnostic_report.html".
+#' @param include_progressive_enhancement Logical, whether to include the four-panel
+#'   progressive enhancement visualization (requires Annihilation Mode). Default TRUE.
 #' @return Invisibly, the path to the generated HTML file.
 #' @export ndx_generate_html_report
 ndx_generate_html_report <- function(workflow_output,
                                      pass0_residuals,
                                      TR,
                                      output_dir = "./diagnostics",
-                                     filename = "ndx_diagnostic_report.html") {
+                                     filename = "ndx_diagnostic_report.html",
+                                     include_progressive_enhancement = TRUE) {
   if (is.null(workflow_output) || !is.list(workflow_output)) {
     stop("workflow_output must be a list from NDX_Process_Subject")
   }
@@ -105,92 +108,182 @@ ndx_generate_html_report <- function(workflow_output,
 
   html_lines <- c(
     "<html>",
-    "<head><title>ND-X Diagnostic Report</title></head>",
+    "<head>",
+    "<title>ND-X Diagnostic Report</title>",
+    "<style>",
+    "body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }",
+    "h1, h2, h3 { color: #333; }",
+    ".section { margin: 20px 0; }",
+    ".card { border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 20px; }",
+    ".params-list { list-style-type: none; padding: 0; }",
+    ".params-list li { padding: 5px 0; border-bottom: 1px solid #eee; }",
+    ".verdict { display: inline-block; padding: 10px 15px; border-radius: 5px; font-weight: bold; color: white; }",
+    "</style>",
+    "</head>",
     "<body>",
-    "<h1>ND-X Diagnostic Report</h1>",
-    "<h2>Denoising Efficacy Score per Pass</h2>",
-    sprintf("<img src='%s' alt='DES per pass'>", basename(des_png))
+    "<h1>ND-X Diagnostic Report</h1>"
   )
 
+  # ---- Add DES section ----
+  html_lines <- c(html_lines,
+    "<div class='section'>",
+    "<h2>Denoising Efficacy Score per Pass</h2>",
+    sprintf("<img src='%s' alt='DES per pass'>", basename(des_png)),
+    "</div>"
+  )
+
+  # ---- Add PSD section ----
   if (!is.null(psd_png)) {
     html_lines <- c(html_lines,
+      "<div class='section'>",
       "<h2>Residual Power Spectral Density</h2>",
-      sprintf("<img src='%s' alt='Residual PSD'>", basename(psd_png)))
+      sprintf("<img src='%s' alt='Residual PSD'>", basename(psd_png)),
+      "</div>"
+    )
   }
 
+  # ---- Add Spike carpet section ----
   if (!is.null(carpet_png)) {
     html_lines <- c(html_lines,
+      "<div class='section'>",
       "<h2>Spike Carpet Plot</h2>",
-      sprintf("<img src='%s' alt='Spike carpet'>", basename(carpet_png)))
+      sprintf("<img src='%s' alt='Spike carpet'>", basename(carpet_png)),
+      "</div>"
+    )
   }
 
-  # Add Annihilation Mode diagnostics if active
+  # ---- Add Annihilation Mode diagnostics if active ----
   if (!is.null(workflow_output$annihilation_mode_active) && workflow_output$annihilation_mode_active) {
-    html_lines <- c(html_lines, "<h2>Annihilation Mode Diagnostics</h2>")
+    html_lines <- c(html_lines, "<div class='section'>", "<h2>Annihilation Mode Diagnostics</h2>")
     
+    # Add GLMdenoise-Lite R² by k plot if available
     if (!is.null(gdlite_png)) {
       html_lines <- c(html_lines, 
-        sprintf("<img src='%s' alt='GLMdenoise-Lite R² by k'>", basename(gdlite_png)))
+        sprintf("<img src='%s' alt='GLMdenoise-Lite R² by k'>", basename(gdlite_png))
+      )
     }
     
-    html_lines <- c(html_lines, "<ul>")
+    # Add Annihilation Verdict
+    if (!is.null(workflow_output$gdlite_pcs) && 
+        (!is.null(workflow_output$rpca_orthogonalized) || !is.null(workflow_output$spectral_orthogonalized))) {
+      
+      # Calculate component variances
+      var_gdlite <- sum(workflow_output$gdlite_pcs^2, na.rm = TRUE)
+      
+      var_ndx_unique <- 0
+      if (!is.null(workflow_output$rpca_orthogonalized)) {
+        var_ndx_unique <- var_ndx_unique + sum(workflow_output$rpca_orthogonalized^2, na.rm = TRUE)
+      }
+      if (!is.null(workflow_output$spectral_orthogonalized)) {
+        var_ndx_unique <- var_ndx_unique + sum(workflow_output$spectral_orthogonalized^2, na.rm = TRUE)
+      }
+      
+      verdict_ratio <- if (var_gdlite > 0) var_ndx_unique / var_gdlite else 0
+      
+      # Determine verdict category
+      if (verdict_ratio < 0.1) {
+        verdict <- "Tie"
+        color <- "#888888"
+        description <- "GLMdenoise and ND-X unique components capture similar noise variance."
+      } else if (verdict_ratio < 0.5) {
+        verdict <- "Win"
+        color <- "#5cb85c"
+        description <- "ND-X unique components capture additional noise not found by GLMdenoise."
+      } else if (verdict_ratio < 1.0) {
+        verdict <- "Decisive Win"
+        color <- "#5bc0de"
+        description <- "ND-X unique components capture substantial additional noise."
+      } else {
+        verdict <- "Annihilation"
+        color <- "#d9534f"
+        description <- "ND-X unique components capture more noise variance than GLMdenoise components."
+      }
+      
+      html_lines <- c(html_lines,
+        "<div class='card' style='text-align: center;'>",
+        "<h3>Annihilation Verdict</h3>",
+        sprintf("<div class='verdict' style='background-color: %s;'>%s</div>", color, verdict),
+        sprintf("<p>Variance Ratio (ND-X Unique / GLMdenoise): <strong>%.2f</strong></p>", verdict_ratio),
+        sprintf("<p style='font-style: italic;'>%s</p>", description),
+        "</div>"
+      )
+    }
+    
+    # Add GLMdenoise stats
+    html_lines <- c(html_lines, "<div class='card'>", "<h3>GLMdenoise-Lite Statistics</h3>", "<ul class='params-list'>")
     
     if (!is.null(workflow_output$gdlite_pcs)) {
       html_lines <- c(html_lines, 
-        sprintf("<li>Number of GLMdenoise PCs used: %d</li>", ncol(workflow_output$gdlite_pcs)))
+        sprintf("<li>Number of GLMdenoise PCs used: <strong>%d</strong></li>", ncol(workflow_output$gdlite_pcs))
+      )
     }
     
     if (!is.null(workflow_output$gdlite_diagnostics)) {
       if (!is.null(workflow_output$gdlite_diagnostics$optimal_k)) {
         html_lines <- c(html_lines, 
-          sprintf("<li>Optimal number of GLMdenoise PCs: %d</li>", workflow_output$gdlite_diagnostics$optimal_k))
+          sprintf("<li>Optimal number of GLMdenoise PCs: <strong>%d</strong></li>", 
+                  workflow_output$gdlite_diagnostics$optimal_k)
+        )
       }
       
       if (!is.null(workflow_output$gdlite_diagnostics$noise_pool_mask)) {
         noise_pool_size <- sum(workflow_output$gdlite_diagnostics$noise_pool_mask)
         total_voxels <- length(workflow_output$gdlite_diagnostics$noise_pool_mask)
         html_lines <- c(html_lines, 
-          sprintf("<li>Noise pool voxels: %d (%.1f%% of total)</li>", 
-                  noise_pool_size, 100 * noise_pool_size / total_voxels))
+          sprintf("<li>Noise pool voxels: <strong>%d</strong> (%.1f%% of total)</li>", 
+                  noise_pool_size, 100 * noise_pool_size / total_voxels)
+        )
       }
       
       if (!is.null(workflow_output$gdlite_diagnostics$good_voxels_mask)) {
         good_voxels_size <- sum(workflow_output$gdlite_diagnostics$good_voxels_mask)
         total_voxels <- length(workflow_output$gdlite_diagnostics$good_voxels_mask)
         html_lines <- c(html_lines, 
-          sprintf("<li>Good voxels: %d (%.1f%% of total)</li>", 
-                  good_voxels_size, 100 * good_voxels_size / total_voxels))
+          sprintf("<li>Good voxels: <strong>%d</strong> (%.1f%% of total)</li>", 
+                  good_voxels_size, 100 * good_voxels_size / total_voxels)
+        )
       }
     }
     
-    html_lines <- c(html_lines, "</ul>")
+    html_lines <- c(html_lines, "</ul>", "</div>", "</div>")
   }
 
-  html_lines <- c(html_lines, "<h2>Key Adaptive Hyperparameters</h2>", "<ul>")
+  # ---- Add key adaptive hyperparameters section ----
+  html_lines <- c(html_lines, 
+    "<div class='section'>",
+    "<h2>Key Adaptive Hyperparameters</h2>",
+    "<div class='card'>",
+    "<ul class='params-list'>"
+  )
   
   # Extract hyperparameters from the correct location in last_diag
   if (!is.null(last_diag$pass_options) && !is.null(last_diag$pass_options$current_rpca_k_target)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>k_rpca_global: %d</li>", last_diag$pass_options$current_rpca_k_target))
+      sprintf("<li>k_rpca_global: <strong>%d</strong></li>", last_diag$pass_options$current_rpca_k_target)
+    )
   } else if (!is.null(last_diag$k_rpca_global)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>k_rpca_global: %d</li>", last_diag$k_rpca_global))
+      sprintf("<li>k_rpca_global: <strong>%d</strong></li>", last_diag$k_rpca_global)
+    )
   }
   
   if (!is.null(last_diag$num_spectral_sines)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>Number of spectral sine pairs: %d</li>", last_diag$num_spectral_sines))
+      sprintf("<li>Number of spectral sine pairs: <strong>%d</strong></li>", last_diag$num_spectral_sines)
+    )
   }
   
   # Add ridge regression lambda parameters
   if (!is.null(last_diag$lambda_parallel_noise)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>lambda_parallel_noise (noise regressors): %.3f</li>", last_diag$lambda_parallel_noise))
+      sprintf("<li>lambda_parallel_noise (noise regressors): <strong>%.3f</strong></li>", last_diag$lambda_parallel_noise)
+    )
   }
   
   if (!is.null(last_diag$lambda_perp_signal)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>lambda_perp_signal (task/signal regressors): %.3f</li>", last_diag$lambda_perp_signal))
+      sprintf("<li>lambda_perp_signal (task/signal regressors): <strong>%.3f</strong></li>", last_diag$lambda_perp_signal)
+    )
   }
   
   # For Annihilation Mode, add unique component lambda if available
@@ -204,28 +297,55 @@ ndx_generate_html_report <- function(workflow_output,
   
   # Add convergence info
   html_lines <- c(html_lines, 
-    sprintf("<li>Number of passes completed: %d</li>", workflow_output$num_passes_completed))
+    sprintf("<li>Number of passes completed: <strong>%d</strong></li>", workflow_output$num_passes_completed)
+  )
   
   if (workflow_output$num_passes_completed < length(workflow_output$diagnostics_per_pass)) {
-    html_lines <- c(html_lines, "<li>Convergence: Reached before maximum passes</li>")
+    html_lines <- c(html_lines, "<li>Convergence: <strong>Reached before maximum passes</strong></li>")
   } else {
-    html_lines <- c(html_lines, "<li>Convergence: Reached maximum passes</li>")
+    html_lines <- c(html_lines, "<li>Convergence: <strong>Reached maximum passes</strong></li>")
   }
   
   # Add final DES value
   if (!is.null(last_diag$DES)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>Final Denoising Efficacy Score (DES): %.4f</li>", last_diag$DES))
+      sprintf("<li>Final Denoising Efficacy Score (DES): <strong>%.4f</strong></li>", last_diag$DES)
+    )
   }
   
   # Add final rho noise projection if available
   if (!is.null(last_diag$rho_noise_projection)) {
     html_lines <- c(html_lines, 
-      sprintf("<li>Final Rho Noise Projection: %.4f</li>", last_diag$rho_noise_projection))
+      sprintf("<li>Final Rho Noise Projection: <strong>%.4f</strong></li>", last_diag$rho_noise_projection)
+    )
   }
   
-  html_lines <- c(html_lines, "</ul>", "</body>", "</html>")
+  html_lines <- c(html_lines, "</ul>", "</div>", "</div>")
 
+  # ---- Add Progressive Enhancement section if requested ----
+  if (include_progressive_enhancement && 
+      !is.null(workflow_output$annihilation_mode_active) && 
+      workflow_output$annihilation_mode_active) {
+    
+    # Use the ndx_progressive_viz functions to generate this section
+    progressive_html <- ndx_generate_progressive_enhancement(
+      workflow_output = workflow_output,
+      output_dir = output_dir
+    )
+    
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>Progressive Enhancement Visualization</h2>",
+      "<p>This interactive visualization shows how each stage of ND-X processing improves denoising effectiveness.</p>",
+      progressive_html,
+      "</div>"
+    )
+  }
+
+  # Close HTML document
+  html_lines <- c(html_lines, "</body>", "</html>")
+
+  # Write HTML file
   html_path <- file.path(output_dir, filename)
   writeLines(html_lines, con = html_path)
   invisible(html_path)
