@@ -33,7 +33,8 @@ If NULL, all TRs are considered valid.}
 \item{user_options}{A list of user-configurable options:
 - `hrf_fir_taps` (integer): Number of FIR basis functions (e.g., 20).
 - `hrf_fir_span_seconds` (numeric): Total duration the FIR model covers (e.g., 24s).
-- `good_voxel_R2_threshold` (numeric): R-squared threshold for selecting good voxels (e.g., 0.02-0.06).
+- `good_voxel_R2_threshold` (numeric): R-squared threshold for selecting good voxels
+  (e.g., 0.02-0.06). Use `-Inf` to disable voxel filtering.
 - `cv_folds` (integer): Number of folds for K-fold cross-validation (e.g., 5).
 - `lambda1_grid` (numeric vector): Grid of values for fused penalty `lambda` (L1 on differences).
 - `lambda2_grid` (numeric vector): Grid of values for ridge penalty `gamma` (L2 on coefficients).
