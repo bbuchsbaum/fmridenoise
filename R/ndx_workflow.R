@@ -133,7 +133,28 @@ NDX_Process_Subject <- function(Y_fmri,
     # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13) ---
     # For Sprint 2 NDX-13, k_rpca_global will be adaptive.
     if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
-    k_rpca_global <- opts_rpca$k_global_target %||% 5 
+
+    if (pass_num > 1) {
+      sv_vals <- tryCatch({
+        svd(Y_residuals_current, nu = 0, nv = 0)$d
+      }, error = function(e) NULL)
+
+      if (!is.null(sv_vals)) {
+        drop_ratio <- opts_rpca$k_elbow_drop_ratio %||% 0.02
+        k_min <- opts_rpca$k_rpca_min %||% 20L
+        k_max <- opts_rpca$k_rpca_max %||% 50L
+        k_rpca_global <- Auto_Adapt_RPCA_Rank(
+          sv_vals,
+          drop_ratio = drop_ratio,
+          k_min = k_min,
+          k_max = k_max
+        )
+      } else {
+        k_rpca_global <- opts_rpca$k_global_target %||% 5
+      }
+    } else {
+      k_rpca_global <- opts_rpca$k_global_target %||% 5
+    }
     rpca_components <- ndx_rpca_temporal_components_multirun(
       Y_residuals_cat = Y_residuals_current,
       run_idx = run_idx,

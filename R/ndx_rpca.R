@@ -487,4 +487,49 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
 }
 
 # Placeholder for the actual Grassmann iterative merge if needed later
-# .grassmann_average_subspaces <- function(V_list, k_target) { ... } 
+# .grassmann_average_subspaces <- function(V_list, k_target) { ... }
+
+#' Auto-Adaptive Rank Selection for RPCA-L
+#'
+#' Determines an appropriate rank for the low-rank component of RPCA
+#' based on the "elbow" in a provided singular value spectrum.
+#' The first index where the singular value ratio drops below
+#' `drop_ratio` is chosen, then clamped between `k_min` and `k_max`.
+#'
+#' @param singular_values Numeric vector of singular values sorted in
+#'   decreasing order.
+#' @param drop_ratio Numeric scalar specifying the drop-off threshold
+#'   relative to the first singular value. Default is `0.02` (2%).
+#' @param k_min Integer minimum allowable rank. Default is `20`.
+#' @param k_max Integer maximum allowable rank. Default is `50`.
+#' @return Integer adaptive rank value within `[k_min, k_max]` and not
+#'   exceeding `length(singular_values)`.
+#' @export
+Auto_Adapt_RPCA_Rank <- function(singular_values,
+                                 drop_ratio = 0.02,
+                                 k_min = 20L,
+                                 k_max = 50L) {
+  if (is.null(singular_values) || length(singular_values) == 0) {
+    warning("Auto_Adapt_RPCA_Rank: singular_values is NULL or empty.")
+    return(as.integer(k_min))
+  }
+  if (!is.numeric(singular_values)) {
+    stop("singular_values must be numeric")
+  }
+  if (!is.finite(singular_values[1])) {
+    warning("Auto_Adapt_RPCA_Rank: first singular value is not finite.")
+    return(as.integer(k_min))
+  }
+
+  ratios <- singular_values / singular_values[1]
+  k_candidate <- which(ratios < drop_ratio)[1]
+  if (is.na(k_candidate)) {
+    k_candidate <- length(singular_values)
+  }
+
+  k_candidate <- max(k_candidate, k_min)
+  k_candidate <- min(k_candidate, k_max)
+  k_candidate <- min(k_candidate, length(singular_values))
+
+  return(as.integer(k_candidate))
+}
