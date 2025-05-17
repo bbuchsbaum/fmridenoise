@@ -29,7 +29,8 @@
 #'     Options are "concat_svd" or "iterative". Default: "concat_svd".
 #' @return A list with elements:
 #'   - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
-#'   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
+#'   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity. The
+#'     mask length is checked against `nrow(Y_residuals_cat)` and padded or truncated with a warning if mismatched.
 #'   Returns NULL if errors occur or no components generated.
 #' @examples
 #' \dontrun{
@@ -392,13 +393,9 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   print(glitch_ratios_per_run[!is.na(glitch_ratios_per_run)])
   message(sprintf("Mean Glitch Ratio across valid runs: %.3f", mean(glitch_ratios_per_run, na.rm=TRUE)))
   
-  # Combine spike masks in original run order
-  spike_TR_mask <- unlist(spike_mask_list[paste0("run_", unique_runs)])
-  if (is.null(spike_TR_mask)) {
-    spike_TR_mask <- rep(FALSE, nrow(Y_residuals_cat))
-  } else {
-    spike_TR_mask <- as.logical(spike_TR_mask)
-  }
+  # Combine spike masks in original run order and validate length
+  spike_TR_mask <- .finalize_spike_mask(spike_mask_list, unique_runs,
+                                        nrow(Y_residuals_cat))
 
   message(sprintf("Multi-run RPCA: Returning %d concatenated temporal components.", ncol(C_components_cat)))
   return(list(C_components = C_components_cat,
@@ -557,4 +554,34 @@ Auto_Adapt_RPCA_Rank <- function(singular_values,
   k_candidate <- min(k_candidate, length(singular_values))
 
   return(as.integer(k_candidate))
+}
+
+#' Combine per-run spike masks and validate total length
+#'
+#' @param spike_mask_list List of logical vectors per run.
+#' @param unique_runs Character or numeric vector of run identifiers used for
+#'   naming in `spike_mask_list`.
+#' @param n_total Integer expected total length.
+#' @return Logical vector of length `n_total`.
+#' @keywords internal
+.finalize_spike_mask <- function(spike_mask_list, unique_runs, n_total) {
+  spike_TR_mask <- unlist(spike_mask_list[paste0("run_", unique_runs)])
+  if (is.null(spike_TR_mask)) {
+    spike_TR_mask <- rep(FALSE, n_total)
+  } else {
+    spike_TR_mask <- as.logical(spike_TR_mask)
+  }
+  if (length(spike_TR_mask) != n_total) {
+    warning(sprintf(
+      "spike_TR_mask length (%d) does not match n_total (%d). Adjusting mask length.",
+      length(spike_TR_mask), n_total
+    ))
+    if (length(spike_TR_mask) < n_total) {
+      length(spike_TR_mask) <- n_total
+      spike_TR_mask[is.na(spike_TR_mask)] <- FALSE
+    } else {
+      spike_TR_mask <- spike_TR_mask[seq_len(n_total)]
+    }
+  }
+  spike_TR_mask
 }
