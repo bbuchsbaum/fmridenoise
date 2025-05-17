@@ -41,7 +41,9 @@ calculate_residuals_ols <- function(Y, X) {
 
   # stats::lm.fit is efficient for multiple response variables (columns in Y)
   fit <- stats::lm.fit(X, Y)
-  res <- unname(fit$residuals)
+  res <- fit$residuals
+  # Remove any row or column names to ensure pure numeric matrix
+  dimnames(res) <- NULL
   return(res)
 }
 

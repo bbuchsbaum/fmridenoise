@@ -56,7 +56,7 @@ user_options_test <- list(
   opts_rpca = list(
     k_global_target = 2, # Small number of components
     rpca_lambda_auto = FALSE,
-    lambda = 0.1 # Provide a small lambda if auto is FALSE
+    rpca_lambda_fixed = 0.1 # Provide a small lambda if auto is FALSE
   ),
   opts_spectral = list(
     n_sine_candidates = 2, # Small number
