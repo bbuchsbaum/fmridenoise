@@ -189,3 +189,28 @@ test_that("Input validation for ndx_ar2_whitening", {
     expect_error(ndx_ar2_whitening(Y_too_short, X_too_short, Y_res_too_short, order = 2L), 
                  regexp = "Number of timepoints \\(2\\) must be greater than AR order \\(2\\)\\.")
 }) 
+
+test_that("ndx_ar2_whitening effectively whitens AR(2) noise", {
+  set.seed(2024)
+  n_timepoints <- 400
+  ar_coeffs <- c(0.8, -0.25)
+  sim <- .generate_ar_data(n_timepoints, ar_coeffs, 1.0)
+  Y <- matrix(sim$series, ncol = 1)
+  X <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
+  res <- ndx_ar2_whitening(Y, X, Y, order = 2L, verbose = FALSE)
+  Yw <- res$Y_whitened[!res$na_mask, 1]
+  lb <- Box.test(Yw, lag = 5, type = "Ljung-Box")
+  expect_gt(lb$p.value, 0.05, label = "Whitened series should pass Ljung-Box test")
+  ar_after <- stats::ar.yw(Yw, aic = FALSE, order.max = 2)
+  expect_true(all(abs(ar_after$ar) < 0.1), label = "AR coeffs after whitening near zero")
+})
+
+test_that("ndx_ar2_whitening leaves white noise unchanged", {
+  set.seed(2025)
+  n_timepoints <- 200
+  Y <- matrix(rnorm(n_timepoints), ncol = 1)
+  X <- matrix(rnorm(n_timepoints), ncol = 1)
+  res <- ndx_ar2_whitening(Y, X, Y, order = 2L, verbose = FALSE)
+  expect_true(all(abs(res$AR_coeffs_voxelwise) < 0.1), label = "AR coeffs of white noise near zero")
+  expect_equal(res$Y_whitened[!res$na_mask, 1], Y[!res$na_mask, 1], tolerance = 0.05)
+})
