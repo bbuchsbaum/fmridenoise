@@ -1,111 +1,133 @@
-#' Solve Ridge Regression for fMRI Data
+#' Solve Anisotropic Ridge Regression Problem
 #'
-#' Solves the ridge regression problem for whitened fMRI data and a whitened design matrix.
-#' For Sprint 1, this implements a basic isotropic ridge regression.
+#' Solves for beta coefficients in a ridge regression model: Y = X beta + E,
+#' minimizing ||Y - X beta||^2 + beta^T K beta, where K is a diagonal penalty matrix.
+#' Handles missing data specified by `na_mask` by removing corresponding timepoints.
 #'
-#' @param Y_whitened A numeric matrix (timepoints x voxels) of whitened fMRI data.
-#'   The first `order` rows (from AR pre-whitening) might be NA and should be handled (e.g. by removing them
-#'   along with corresponding rows in X_whitened before solving).
-#' @param X_whitened A numeric matrix (timepoints x regressors) of the whitened design matrix.
-#'   Corresponding rows to NAs in Y_whitened should also be handled/removed.
-#' @param lambda_ridge A single numeric value for the ridge penalty (lambda). For Sprint 1,
-#'   this is a fixed value. GCV selection can be added later.
-#' @param na_mask An optional logical vector indicating rows to remove from Y_whitened and X_whitened
-#'   due to NA values (e.g., from AR filter initialization). If NULL (default), the function will
-#'   attempt to identify and remove rows with any NAs in Y_whitened.
-#'
-#' @return A matrix (regressors x voxels) of estimated beta coefficients (betas_whitened).
-#'
-#' @details
-#' The ridge regression solution is `beta = (X'X + lambda * I)^(-1) X'Y`.
-#' This function assumes `Y_whitened` and `X_whitened` have had initial NA rows
-#' (e.g., from AR pre-whitening) removed or properly handled if `na_mask` is provided.
-#' If `na_mask` is not provided, any row in `Y_whitened` containing at least one NA will lead to that row (and the
-#' corresponding row in `X_whitened`) being removed before model fitting.
-#'
-#' @export
-ndx_solve_ridge <- function(Y_whitened, X_whitened, lambda_ridge, na_mask = NULL) {
+#' @param Y_whitened A numeric matrix of whitened dependent variables (timepoints x voxels/responses).
+#' @param X_whitened A numeric matrix of whitened regressors (timepoints x n_regressors).
+#' @param K_penalty_diag A numeric vector containing the diagonal elements of the penalty matrix K.
+#'   Its length must be equal to `ncol(X_whitened)`.
+#' @param na_mask Optional. A logical vector where TRUE indicates timepoints to exclude.
+#'   If NULL, all timepoints are used.
+#' @return A matrix of estimated beta coefficients (n_regressors x voxels/responses).
+#'   Returns NULL if inputs are invalid or the problem cannot be solved.
+#' @export ndx_solve_anisotropic_ridge
+ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag, na_mask = NULL) {
 
-  # Input validation
+  # --- Input Validation ---
+  if (is.null(Y_whitened) || is.null(X_whitened)){
+    warning("Y_whitened and X_whitened must be provided.")
+    return(NULL)
+  }
   if (!is.matrix(Y_whitened) || !is.numeric(Y_whitened)) {
-    stop("Y_whitened must be a numeric matrix.")
+    warning("Y_whitened must be a numeric matrix.")
+    return(NULL)
   }
   if (!is.matrix(X_whitened) || !is.numeric(X_whitened)) {
-    stop("X_whitened must be a numeric matrix.")
+    warning("X_whitened must be a numeric matrix.")
+    return(NULL)
   }
   if (nrow(Y_whitened) != nrow(X_whitened)) {
-    stop("Y_whitened and X_whitened must have the same number of rows (timepoints).")
+    warning("Y_whitened and X_whitened must have the same number of rows (timepoints).")
+    return(NULL)
   }
-  if (!is.numeric(lambda_ridge) || length(lambda_ridge) != 1 || lambda_ridge < 0) {
-    stop("lambda_ridge must be a single non-negative numeric value.")
+  if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
+    warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
+    return(NULL)
   }
-
-  n_timepoints_orig <- nrow(Y_whitened)
-  n_voxels <- ncol(Y_whitened)
-  n_regressors <- ncol(X_whitened)
-
-  if (n_regressors == 0) {
-    warning("X_whitened has 0 regressors. Returning empty beta matrix.")
-    return(matrix(NA_real_, nrow = 0, ncol = n_voxels))
-  }
-  if (n_voxels == 0) {
-    warning("Y_whitened has 0 voxels. Returning empty beta matrix.")
-    return(matrix(NA_real_, nrow = n_regressors, ncol = 0))
+  if (any(K_penalty_diag < 0)) {
+    warning("All elements of K_penalty_diag must be non-negative.")
+    return(NULL)
   }
 
-  # Handle NA rows from AR pre-whitening
+  # --- Handle NAs ---
   if (!is.null(na_mask)) {
-    if (!is.logical(na_mask) || length(na_mask) != n_timepoints_orig) {
-      stop("Provided na_mask must be a logical vector of length equal to nrows of Y_whitened.")
+    if (!is.logical(na_mask) || length(na_mask) != nrow(Y_whitened)) {
+      warning("na_mask must be a logical vector with length equal to nrow(Y_whitened). Using all timepoints.")
+      Y_eff <- Y_whitened
+      X_eff <- X_whitened
+    } else {
+      if (all(na_mask)) {
+        warning("All timepoints are masked by na_mask. Cannot solve ridge regression.")
+        return(NULL)
+      }
+      Y_eff <- Y_whitened[!na_mask, , drop = FALSE]
+      X_eff <- X_whitened[!na_mask, , drop = FALSE]
     }
-    Y_clean <- Y_whitened[!na_mask, , drop = FALSE]
-    X_clean <- X_whitened[!na_mask, , drop = FALSE]
   } else {
-    # Default: remove rows with any NAs in Y_whitened (more robust if na_mask not passed)
-    complete_y_rows <- stats::complete.cases(Y_whitened)
-    if (!all(complete_y_rows)) {
-        message(sprintf("Removing %d rows with NAs in Y_whitened prior to ridge regression.", sum(!complete_y_rows)))
-    }
-    Y_clean <- Y_whitened[complete_y_rows, , drop = FALSE]
-    X_clean <- X_whitened[complete_y_rows, , drop = FALSE]
-  }
-  
-  n_timepoints_clean <- nrow(X_clean)
-
-  if (n_timepoints_clean == 0) {
-    warning("No timepoints remaining after NA removal. Returning NA betas.")
-    return(matrix(NA_real_, nrow = n_regressors, ncol = n_voxels))
-  }
-  if (n_timepoints_clean < n_regressors) {
-    warning(sprintf("Number of timepoints after NA removal (%d) is less than number of regressors (%d). Ridge solution might be unstable or fail. Returning NA betas.", 
-                    n_timepoints_clean, n_regressors))
-    return(matrix(NA_real_, nrow = n_regressors, ncol = n_voxels))
+    Y_eff <- Y_whitened
+    X_eff <- X_whitened
   }
 
-  # Ridge regression calculation: beta = (X'X + lambda * I)^-1 X'Y
-  # More stable computation: solve((X'X + lambda*I) beta = X'Y)
-  XtX <- crossprod(X_clean) # t(X_clean) %*% X_clean
-  # Identity matrix of size n_regressors x n_regressors
-  I <- diag(n_regressors) 
-  
-  # Ensure I has the same dimensions as XtX if n_regressors is 1
-  if (n_regressors == 1 && !is.matrix(I)) {
-    I <- matrix(I, 1, 1)
+  if (nrow(X_eff) == 0) {
+    warning("No timepoints remaining after NA removal (or initial input had 0 timepoints). Cannot solve.")
+    return(NULL)
+  }
+  if (nrow(X_eff) < ncol(X_eff)) {
+    warning(sprintf("Number of timepoints after NA removal (%d) is less than number of regressors (%d). Ridge solution might be unstable or not meaningful.", 
+                    nrow(X_eff), ncol(X_eff)))
+    # Proceeding, as ridge can handle p > n
   }
   
-  # LHS = (X'X + lambda * I)
-  lhs <- XtX + lambda_ridge * I
-  # RHS = X'Y
-  XtY <- crossprod(X_clean, Y_clean) # t(X_clean) %*% Y_clean
+  # --- Solve Ridge Regression ---
+  col_vars <- matrixStats::colVars(X_eff, na.rm = TRUE)
+  if (any(col_vars < .Machine$double.eps^0.5 & K_penalty_diag[which(col_vars < .Machine$double.eps^0.5)] < .Machine$double.eps^0.5 )) {
+      warning("One or more regressors in X_eff have near-zero variance AND near-zero penalty. Solution may be unstable.")
+  } else if (any(col_vars < .Machine$double.eps^0.5)) {
+      warning("One or more regressors in X_eff have near-zero variance (but may be stabilized by penalty).")
+  }
 
-  betas_whitened <- tryCatch({
-    solve(lhs, XtY)
+  XtX <- crossprod(X_eff)
+  XtY <- crossprod(X_eff, Y_eff)
+  
+  if (ncol(X_eff) == 0) { 
+      warning("X_eff has zero columns after NA removal. Cannot solve.")
+      return(NULL)
+  }
+  
+  # Add penalty to diagonal of XtX
+  # Ensure K_penalty_diag always has a small positive floor for numerical stability with Cholesky
+  safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps) 
+  
+  XtX_penalized <- XtX
+  diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+  
+  betas <- NULL
+  tryCatch({
+    # Using Cholesky decomposition: beta = (X'X + K)^-1 X'Y = chol2inv(chol(X'X + K)) X'Y
+    chol_decomp <- chol(XtX_penalized)
+    betas <- chol2inv(chol_decomp) %*% XtY
   }, error = function(e) {
-    warning(paste("Solving ridge regression failed:", e$message, "Returning NA betas."))
-    matrix(NA_real_, nrow = n_regressors, ncol = n_voxels)
+    warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
+    # Fallback to generalized inverse if Cholesky fails (e.g. not perfectly PD despite epsilon)
+    # This is less ideal as it doesn't guarantee the ridge shrinkage as intended.
+    # K_matrix <- diag(safe_K_penalty_diag, nrow = ncol(X_eff), ncol = ncol(X_eff))
+    # tryCatch({
+    #   betas <<- MASS::ginv(XtX + K_matrix) %*% XtY
+    #   warning("Cholesky solve failed, used MASS::ginv as fallback.")
+    # }, error = function(e2) {
+    #   warning(paste("Solving ridge regression failed (MASS::ginv fallback also failed):", e2$message))
+    #   betas <<- NULL
+    # })
+    betas <<- NULL # Keep it simple: if chol fails, we fail for now.
   })
   
-  return(betas_whitened)
+  if (is.null(betas)) {
+    # Consider returning matrix of NAs of appropriate size for type stability if preferred downstream
+    # For now, consistent with other NULL returns on failure.
+    return(NULL)
+  }
+  
+  # Ensure output has correct row/col names if X_whitened had them
+  if (!is.null(colnames(X_whitened))) {
+    rownames(betas) <- colnames(X_whitened)
+  }
+  if (!is.null(colnames(Y_whitened))) {
+    colnames(betas) <- colnames(Y_whitened)
+  }
+  
+  return(betas)
 }
 
 #' Extract Task-Related Beta Coefficients
@@ -122,7 +144,8 @@ ndx_solve_ridge <- function(Y_whitened, X_whitened, lambda_ridge, na_mask = NULL
 #'   to be extracted.
 #' @param ar_coeffs_global Optional. The global AR coefficients (vector of length `order`) that were used
 #'   to whiten the design matrix `X`. If provided, a conceptual note about unwhitening can be considered.
-#'   (Currently not used for actual unwhitening in Sprint 1).
+#'   (Currently not used for actual unwhitening).
+#' @param unwhiten Logical, if TRUE, attempt to unwhiten betas. Default is FALSE (not yet implemented).
 #'
 #' @return A matrix (num_task_regressors x voxels) of the extracted task-related beta coefficients.
 #'   Row names will correspond to `task_regressor_names`.
@@ -136,7 +159,8 @@ ndx_solve_ridge <- function(Y_whitened, X_whitened, lambda_ridge, na_mask = NULL
 #' (Y ~ X) may require further methodological development and is deferred.
 #'
 #' @export
-ndx_extract_task_betas <- function(betas_whitened, X_whitened_colnames, task_regressor_names, ar_coeffs_global = NULL) {
+ndx_extract_task_betas <- function(betas_whitened, X_whitened_colnames, task_regressor_names, 
+                                   ar_coeffs_global = NULL, unwhiten = FALSE) {
 
   # Input validation
   if (!is.matrix(betas_whitened) || !is.numeric(betas_whitened)) {
@@ -187,13 +211,9 @@ ndx_extract_task_betas <- function(betas_whitened, X_whitened_colnames, task_reg
   found_task_names <- X_whitened_colnames[task_indices]
   rownames(extracted_betas) <- found_task_names
   
-  # Placeholder for unwhitening logic (Sprint 2+)
-  if (!is.null(ar_coeffs_global)) {
-    # message("Note: Unwhitening of betas is not implemented in Sprint 1. Betas are on the whitened scale.")
-    # Conceptual: If X* = WX and Y* = WY (assume same W for simplicity for a moment)
-    # Beta* from Y* = X*Beta* + e*
-    # If W is invertible, Y = W^-1 Y*, X = W^-1 X*
-    # How Beta* relates to Beta from Y = X Beta + e is complicated if W differs or is voxel-specific for Y.
+  if (unwhiten) {
+    warning("Unwhitening of betas (argument unwhiten=TRUE) is not yet implemented. Returning whitened betas.")
+    # Placeholder for future unwhitening logic using ar_coeffs_global if provided
   }
   
   return(extracted_betas)

@@ -8,7 +8,8 @@ ndx_extract_task_betas(
   betas_whitened,
   X_whitened_colnames,
   task_regressor_names,
-  ar_coeffs_global = NULL
+  ar_coeffs_global = NULL,
+  unwhiten = FALSE
 )
 }
 \arguments{
@@ -23,7 +24,9 @@ to be extracted.}
 
 \item{ar_coeffs_global}{Optional. The global AR coefficients (vector of length `order`) that were used
 to whiten the design matrix `X`. If provided, a conceptual note about unwhitening can be considered.
-(Currently not used for actual unwhitening in Sprint 1).}
+(Currently not used for actual unwhitening).}
+
+\item{unwhiten}{Logical, if TRUE, attempt to unwhiten betas. Default is FALSE (not yet implemented).}
 }
 \value{
 A matrix (num_task_regressors x voxels) of the extracted task-related beta coefficients.

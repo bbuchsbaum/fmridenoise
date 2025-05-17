@@ -144,6 +144,7 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
 * Exhaustive stress-testing against diverse "pathological" datasets (initial robustness via fallbacks in place).
 * Advanced `S_t,v` based precision re-weighting fully integrated into the ridge objective.
 * User-configurable manual overrides for all auto-adaptive parameters (focus on auto-pilot first).
+* Hierarchical (partial-pool) shrinkage of HRF estimates towards a grand average (enhancement for `NDx_FusedFIR`).
 
 ---
 ## Addendum: Detailed Plan for NDX-15 (Spike Handling from RPCA 'S' Component)

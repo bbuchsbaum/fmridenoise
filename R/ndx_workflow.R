@@ -89,6 +89,17 @@ NDX_Process_Subject <- function(Y_fmri,
   VAR_BASELINE_FOR_DES <- NULL # From initial GLM
   current_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
   
+  # Default options for sub-modules 
+  default_opts_ridge <- list(
+    lambda_ridge = 1.0, # Old isotropic lambda, keep for now if anisotropic is conditional
+    # New options for anisotropic ridge (NDX-16)
+    anisotropic_ridge_enable = TRUE, # Control whether to use new anisotropic path
+    lambda_parallel_noise = 10.0,  # Penalty for ND-X nuisance (RPCA, Spectral)
+    lambda_perp_signal = 0.1,    # Penalty for signal-related/other regressors
+    lambda_gcv = FALSE # Placeholder for GCV tuning later
+  )
+  opts_ridge <- utils::modifyList(default_opts_ridge, user_options$opts_ridge %||% list())
+
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
     if (verbose) message(sprintf("\n--- Starting ND-X Pass %d/%d ---", pass_num, max_passes))
@@ -301,17 +312,44 @@ NDX_Process_Subject <- function(Y_fmri,
     }
 
     # --- 7. Ridge Regression (NDX-7 / NDX-16 Anisotropic Ridge) ---
-    # For Sprint 2 NDX-16, this will be ndx_solve_anisotropic_ridge.
-    if (verbose) message(sprintf("Pass %d: Performing Ridge Regression...", pass_num))
-    if (!is.null(current_pass_results$X_whitened) && !is.null(current_pass_results$Y_whitened)) {
-      ridge_betas_whitened <- ndx_solve_ridge(
+    if (verbose) message(sprintf("Pass %d: Performing Ridge/Anisotropic Regression...", pass_num))
+    if (!is.null(current_pass_results$X_whitened) && !is.null(current_pass_results$Y_whitened) && ncol(current_pass_results$X_whitened) > 0) {
+      
+      n_regressors <- ncol(current_pass_results$X_whitened)
+      K_penalty_diag <- rep(opts_ridge$lambda_perp_signal %||% 0.1, n_regressors) # Default to lambda_perp
+      
+      if (opts_ridge$anisotropic_ridge_enable %||% TRUE) {
+        regressor_names <- colnames(current_pass_results$X_whitened)
+        if (!is.null(regressor_names)) {
+          # Identify ND-X noise columns (RPCA and Spectral)
+          # These patterns should match what ndx_build_design_matrix creates
+          is_rpca_col <- grepl("^rpca_comp_", regressor_names)
+          is_spectral_col <- grepl("^(sin_f|cos_f|spectral_comp_)", regressor_names)
+          noise_col_indices <- which(is_rpca_col | is_spectral_col)
+          
+          if (length(noise_col_indices) > 0) {
+            K_penalty_diag[noise_col_indices] <- opts_ridge$lambda_parallel_noise %||% 10.0
+            if (verbose) message(sprintf("    Applied lambda_parallel_noise=%.2f to %d RPCA/Spectral columns.", 
+                                       opts_ridge$lambda_parallel_noise %||% 10.0, length(noise_col_indices)))
+          } else {
+            if (verbose) message("    No specific RPCA/Spectral columns found for anisotropic penalty; all regressors use lambda_perp_signal.")
+          }
+        } else {
+          if (verbose) message("    Colnames for X_whitened not available, using isotropic penalty with lambda_perp_signal for all.")
+        }
+      } else { # Isotropic ridge (fallback to old behavior or if anisotropic disabled)
+        K_penalty_diag <- rep(opts_ridge$lambda_ridge %||% 1.0, n_regressors)
+        if (verbose) message(sprintf("    Using isotropic ridge with lambda=%.2f for all regressors.", opts_ridge$lambda_ridge %||% 1.0))
+      }
+      
+      ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
         Y_whitened = current_pass_results$Y_whitened,
         X_whitened = current_pass_results$X_whitened,
-        lambda_ridge = opts_ridge$lambda_ridge %||% 1.0, 
+        K_penalty_diag = K_penalty_diag, 
         na_mask = current_pass_results$na_mask_whitening
       )
       current_pass_results$ridge_betas_whitened <- ridge_betas_whitened
-      beta_history_per_pass[[pass_num]] <- ridge_betas_whitened # Store betas for this pass
+      beta_history_per_pass[[pass_num]] <- ridge_betas_whitened 
 
       # Extract task betas
       if (!is.null(ridge_betas_whitened) && length(task_regressor_names) > 0) {

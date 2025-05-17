@@ -1,97 +1,110 @@
-context("ndx_solve_ridge - Functionality")
+context("ndx_solve_anisotropic_ridge - Functionality")
 
-# Helper function to generate some data
-.generate_ridge_test_data <- function(n_timepoints, n_regressors, n_voxels, true_betas, noise_sd = 1.0, na_head = 0) {
+# Helper function to create simple test data
+.create_ridge_test_data <- function(n_timepoints, n_regressors, n_voxels, true_betas, noise_sd = 1.0, na_head = 0) {
+  set.seed(123) # Ensure reproducibility for this helper
   X <- matrix(rnorm(n_timepoints * n_regressors), n_timepoints, n_regressors)
-  # Ensure true_betas is a matrix of correct dimensions (n_regressors x n_voxels)
-  if (is.vector(true_betas)) {
-    if (length(true_betas) != n_regressors) stop("Length of true_betas vector must match n_regressors")
-    true_betas_matrix <- matrix(rep(true_betas, n_voxels), nrow = n_regressors, ncol = n_voxels)
-  } else if (is.matrix(true_betas)) {
-    if (nrow(true_betas) != n_regressors || ncol(true_betas) != n_voxels) {
-      stop("Dimensions of true_betas matrix are incorrect.")
-    }
-    true_betas_matrix <- true_betas
-  } else {
-    stop("true_betas must be a vector or a matrix.")
-  }
+  # Ensure X has some variance and is not perfectly collinear for basic tests
+  if (n_regressors > 0) X[,1] <- 1 # Intercept if at least one regressor
+  if (n_regressors > 1) X[,2] <- seq(0,1,length.out=n_timepoints)
+  if (n_regressors > 2) X[,3] <- (seq(0,1,length.out=n_timepoints))^2
+  if (n_regressors > 3) X[,4] <- sin(seq(0,2*pi,length.out=n_timepoints))
   
-  Y_signal <- X %*% true_betas_matrix
+  # Ensure true_betas is a matrix of correct dimensions (n_regressors x n_voxels)
+  if (n_regressors > 0) {
+    if (is.vector(true_betas)) {
+      if (length(true_betas) != n_regressors) stop("Length of true_betas vector must match n_regressors")
+      true_betas_matrix <- matrix(rep(true_betas, n_voxels), nrow = n_regressors, ncol = n_voxels)
+    } else if (is.matrix(true_betas)) {
+      if (nrow(true_betas) != n_regressors || ncol(true_betas) != n_voxels) {
+        stop("Dimensions of true_betas matrix are incorrect.")
+      }
+      true_betas_matrix <- true_betas
+    } else {
+      stop("true_betas must be a vector or a matrix.")
+    }
+    Y_signal <- X %*% true_betas_matrix
+  } else { # No regressors
+      true_betas_matrix <- matrix(0, nrow=0, ncol=n_voxels)
+      Y_signal <- matrix(0, nrow=n_timepoints, ncol=n_voxels)
+  }
+
   Y_noise <- matrix(rnorm(n_timepoints * n_voxels, sd = noise_sd), n_timepoints, n_voxels)
   Y <- Y_signal + Y_noise
   
   na_mask_vec <- rep(FALSE, n_timepoints)
   if (na_head > 0 && n_timepoints > na_head) {
     Y[1:na_head, ] <- NA
-    # X[1:na_head, ] <- NA # Not strictly needed to make X have NAs for this test, Y is enough
     na_mask_vec[1:na_head] <- TRUE
   }
   
+  if (n_regressors > 0) colnames(X) <- paste0("Reg", 1:n_regressors)
+  if (n_voxels > 0) colnames(Y) <- paste0("Voxel", 1:n_voxels)
   return(list(Y = Y, X = X, true_betas = true_betas_matrix, na_mask = na_mask_vec))
 }
 
-test_that("ndx_solve_ridge computes correct betas for a simple case", {
+test_that("ndx_solve_anisotropic_ridge computes correct betas for a simple case", {
   set.seed(123)
   n_tp <- 100
   n_reg <- 2
   n_vox <- 1
   true_b <- c(2, -3)
-  lambda <- 1.0
+  lambda_val <- 0.5
   
-  test_data <- .generate_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 0.1)
+  test_data <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 0.1)
+  K_diag <- rep(lambda_val, ncol(test_data$X))
   
-  # Manual calculation for single voxel
-  # beta = (X'X + lambda * I)^(-1) X'Y
+  betas_ridge <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag)
+  dimnames(betas_ridge) <- NULL # Strip dimnames for comparison
+
   XtX <- crossprod(test_data$X)
-  I <- diag(n_reg)
-  expected_betas_manual <- solve(XtX + lambda * I) %*% crossprod(test_data$X, test_data$Y[,1,drop=FALSE])
+  K_matrix_manual <- diag(lambda_val, ncol(test_data$X))
+  expected_betas_manual <- solve(XtX + K_matrix_manual) %*% crossprod(test_data$X, test_data$Y[,1,drop=FALSE])
+  dimnames(expected_betas_manual) <- NULL # Strip dimnames
   
-  ridge_betas <- ndx_solve_ridge(test_data$Y, test_data$X, lambda_ridge = lambda)
-  
-  expect_true(is.matrix(ridge_betas))
-  expect_equal(nrow(ridge_betas), n_reg)
-  expect_equal(ncol(ridge_betas), n_vox)
-  expect_equal(ridge_betas[,1], as.vector(expected_betas_manual), tolerance = 1e-6)
+  expect_true(!is.null(betas_ridge))
+  expect_equal(dim(betas_ridge), c(n_reg, n_vox))
+  expect_equal(as.vector(betas_ridge[,1]), as.vector(expected_betas_manual), tolerance = 1e-6)
 })
 
-test_that("ndx_solve_ridge handles lambda_ridge = 0 (OLS-like)", {
+test_that("ndx_solve_anisotropic_ridge handles K_penalty_diag = 0 (OLS-like)", {
   set.seed(456)
   n_tp <- 50
   n_reg <- 3
   n_vox <- 2
   true_b_mat <- matrix(c(1,0.5,-1, -2,1,0.3), nrow=n_reg, ncol=n_vox) 
   
-  test_data <- .generate_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.2)
+  test_data <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.2)
+  K_diag_zero <- rep(0, ncol(test_data$X))
   
-  # OLS solution: (X'X)^-1 X'Y
-  # Using lm.fit for robustness against collinearity, though unlikely here
-  ols_betas_list <- lapply(1:n_vox, function(v_idx) coef(lm.fit(test_data$X, test_data$Y[,v_idx])))
-  ols_betas_manual <- do.call(cbind, ols_betas_list)
-  dimnames(ols_betas_manual) <- NULL # Strip dimnames for comparison consistency
-
-  ridge_betas_lambda0 <- ndx_solve_ridge(test_data$Y, test_data$X, lambda_ridge = 0)
+  betas_ols_like <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_zero)
+  dimnames(betas_ols_like) <- NULL # Strip dimnames
   
-  expect_equal(ridge_betas_lambda0, ols_betas_manual, tolerance = 1e-6)
+  ols_betas_lm_fit <- stats::lm.fit(test_data$X, test_data$Y)$coefficients
+  dimnames(ols_betas_lm_fit) <- NULL 
+  
+  expect_equal(betas_ols_like, ols_betas_lm_fit, tolerance = 1e-6)
 })
 
-test_that("ndx_solve_ridge shrinks betas with high lambda", {
+test_that("ndx_solve_anisotropic_ridge shrinks betas with high K_penalty_diag values", {
   set.seed(789)
   n_tp <- 50
   n_reg <- 2
   n_vox <- 1
   true_b <- c(10, -15)
-  test_data <- .generate_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 1)
+  test_data <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 1)
 
-  ridge_betas_low_lambda <- ndx_solve_ridge(test_data$Y, test_data$X, lambda_ridge = 0.1)
-  ridge_betas_high_lambda <- ndx_solve_ridge(test_data$Y, test_data$X, lambda_ridge = 10000)
+  K_diag_low <- rep(0.1, ncol(test_data$X))
+  K_diag_high <- rep(10000, ncol(test_data$X))
+
+  betas_low_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_low)
+  betas_high_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_high)
   
-  # Check that sum of absolute beta values is much smaller for high lambda
-  expect_lt(sum(abs(ridge_betas_high_lambda)), sum(abs(ridge_betas_low_lambda)) * 0.1)
-  # Check that high lambda betas are close to zero
-  expect_true(all(abs(ridge_betas_high_lambda) < 0.1))
+  expect_lt(sum(abs(betas_high_lambda)), sum(abs(betas_low_lambda)) * 0.1)
+  expect_true(all(abs(betas_high_lambda) < 0.1))
 })
 
-test_that("ndx_solve_ridge handles na_mask and NAs in Y_whitened correctly", {
+test_that("ndx_solve_anisotropic_ridge handles na_mask correctly", {
   set.seed(101)
   n_tp <- 60
   n_reg <- 2
@@ -99,83 +112,62 @@ test_that("ndx_solve_ridge handles na_mask and NAs in Y_whitened correctly", {
   true_b_mat <- matrix(c(1,2, -1,0.5), n_reg, n_vox)
   na_count = 3
   
-  test_data_na <- .generate_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.1, na_head = na_count)
+  test_data_na <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.1, na_head = na_count)
   Y_with_na <- test_data_na$Y
   X_for_na <- test_data_na$X
   na_mask_provided <- test_data_na$na_mask
+  K_diag <- rep(1.0, ncol(X_for_na))
   
-  # 1. With na_mask provided
-  betas_with_mask <- ndx_solve_ridge(Y_with_na, X_for_na, lambda_ridge = 1.0, na_mask = na_mask_provided)
+  betas_with_mask <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = na_mask_provided)
   
-  # Manual calculation on clean data
   Y_clean_manual <- Y_with_na[!na_mask_provided, , drop = FALSE]
   X_clean_manual <- X_for_na[!na_mask_provided, , drop = FALSE]
-  XtX_clean <- crossprod(X_clean_manual)
-  I_clean <- diag(n_reg)
-  expected_betas_clean_manual <- solve(XtX_clean + 1.0 * I_clean) %*% crossprod(X_clean_manual, Y_clean_manual)
+  K_matrix_manual <- diag(1.0, ncol(X_clean_manual))
+  expected_betas_clean_manual <- solve(crossprod(X_clean_manual) + K_matrix_manual, 
+                                       crossprod(X_clean_manual, Y_clean_manual))
   
   expect_equal(betas_with_mask, expected_betas_clean_manual, tolerance = 1e-6)
 
-  # 2. Without na_mask (should auto-detect and remove NA rows from Y)
-  betas_auto_na <- ndx_solve_ridge(Y_with_na, X_for_na, lambda_ridge = 1.0, na_mask = NULL)
-  expect_equal(betas_auto_na, expected_betas_clean_manual, tolerance = 1e-6, 
-               label = "Should match manual clean when na_mask is NULL and Y has NAs")
-               
-  # 3. No NAs present, na_mask=NULL (should run on full data)
-  test_data_no_na <- .generate_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.1, na_head = 0)
-  XtX_full <- crossprod(test_data_no_na$X)
-  expected_betas_full_manual <- solve(XtX_full + 1.0 * diag(n_reg)) %*% crossprod(test_data_no_na$X, test_data_no_na$Y)
-  betas_no_na_null_mask <- ndx_solve_ridge(test_data_no_na$Y, test_data_no_na$X, lambda_ridge = 1.0, na_mask = NULL)
-  expect_equal(betas_no_na_null_mask, expected_betas_full_manual, tolerance = 1e-6)
-  
-  # 4. All Y rows are NA
-  Y_all_na <- matrix(NA_real_, nrow=n_tp, ncol=n_vox)
+  betas_raw_na <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = NULL)
+  expect_true(any(is.na(betas_raw_na))) 
+
+  all_na_mask <- rep(TRUE, nrow(Y_with_na))
   expect_warning(
-    betas_all_na <- ndx_solve_ridge(Y_all_na, X_for_na, lambda_ridge = 1.0, na_mask = NULL),
-    "No timepoints remaining after NA removal. Returning NA betas."
+    betas3 <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = all_na_mask),
+    "All timepoints are masked by na_mask"
   )
-  expect_true(all(is.na(betas_all_na)))
-  expect_equal(nrow(betas_all_na), n_reg)
-  expect_equal(ncol(betas_all_na), n_vox)
+  expect_null(betas3)
 })
 
-test_that("ndx_solve_ridge input validation works", {
+
+test_that("ndx_solve_anisotropic_ridge input validation works", {
   Y_good <- matrix(rnorm(20*2), 20, 2)
   X_good <- matrix(rnorm(20*3), 20, 3)
-  lambda_good <- 1.0
-  na_mask_good <- rep(FALSE, 20)
+  K_diag_good <- rep(0.1, ncol(X_good))
   
-  expect_error(ndx_solve_ridge(as.data.frame(Y_good), X_good, lambda_good), "Y_whitened must be a numeric matrix.")
-  expect_error(ndx_solve_ridge(Y_good, as.data.frame(X_good), lambda_good), "X_whitened must be a numeric matrix.")
-  expect_error(ndx_solve_ridge(Y_good, X_good[1:10,], lambda_good), "Y_whitened and X_whitened must have the same number of rows")
-  expect_error(ndx_solve_ridge(Y_good, X_good, "a"), "lambda_ridge must be a single non-negative numeric value.")
-  expect_error(ndx_solve_ridge(Y_good, X_good, -1), "lambda_ridge must be a single non-negative numeric value.")
-  expect_error(ndx_solve_ridge(Y_good, X_good, c(1,2)), "lambda_ridge must be a single non-negative numeric value.")
-  expect_error(ndx_solve_ridge(Y_good, X_good, lambda_good, na_mask = rep(FALSE, 10)), "Provided na_mask must be a logical vector of length equal to nrows of Y_whitened.")
-  expect_error(ndx_solve_ridge(Y_good, X_good, lambda_good, na_mask = as.numeric(na_mask_good)), "Provided na_mask must be a logical vector of length equal to nrows of Y_whitened.")
-
-  # More regressors than timepoints after NA removal
-  X_too_many_reg <- matrix(rnorm(5*6), 5, 6)
-  Y_short <- matrix(rnorm(5*1), 5, 1)
-  expect_warning(
-    b_warn <- ndx_solve_ridge(Y_short, X_too_many_reg, lambda_good, na_mask=rep(FALSE,5)),
-    "Number of timepoints after NA removal \\(5\\) is less than number of regressors \\(6\\)"
-  )
-  expect_true(all(is.na(b_warn)))
+  expect_warning(ndx_solve_anisotropic_ridge(as.data.frame(Y_good), X_good, K_diag_good), "Y_whitened must be a numeric matrix", fixed = TRUE)
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, as.data.frame(X_good), K_diag_good), "X_whitened must be a numeric matrix", fixed = TRUE)
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good[1:10, ], K_diag_good), "Y_whitened and X_whitened must have the same number of rows", fixed = TRUE)
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good[1]), "K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).", fixed = TRUE)
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, "a"), "K_penalty_diag must be a numeric vector", fixed = TRUE) 
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, c(-0.1, 0.1, 0.1)), "All elements of K_penalty_diag must be non-negative", fixed = TRUE) 
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, na_mask=rep(TRUE, 5)), "na_mask must be a logical vector with length equal to nrow(Y_whitened).", fixed = TRUE)
   
-  # Zero regressors or voxels
-  expect_warning(b_zero_reg <- ndx_solve_ridge(Y_good, X_good[,0,drop=FALSE], lambda_good), "X_whitened has 0 regressors.")
-  expect_equal(dim(b_zero_reg), c(0, ncol(Y_good)))
-  expect_warning(b_zero_vox <- ndx_solve_ridge(Y_good[,0,drop=FALSE], X_good, lambda_good), "Y_whitened has 0 voxels.")
-  expect_equal(dim(b_zero_vox), c(ncol(X_good), 0))
+  Y_short_for_warn <- Y_good[1:2, , drop=FALSE]
+  X_wide_for_warn <- X_good[1:2, , drop=FALSE] 
+  expect_warning(ndx_solve_anisotropic_ridge(Y_short_for_warn, X_wide_for_warn, K_diag_good), 
+                 "Number of timepoints after NA removal (2) is less than number of regressors (3)", fixed = TRUE)
+  
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good[,0,drop=FALSE], K_diag_good), "K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).", fixed = TRUE) 
+  expect_null(ndx_solve_anisotropic_ridge(Y_good, X_good[,0,drop=FALSE], numeric(0)))
 })
 
 context("ndx_extract_task_betas - Functionality")
 
 test_that("ndx_extract_task_betas extracts specified betas correctly", {
   betas_full <- matrix(1:12, nrow = 4, ncol = 3)
-  colnames_x <- paste0("reg", 1:4) # Matches rows of betas_full if rownames were set
-  rownames(betas_full) <- colnames_x # Simulate betas from a named X
+  colnames_x <- paste0("reg", 1:4) 
+  rownames(betas_full) <- colnames_x 
   
   tasks_to_extract <- c("reg2", "reg4")
   extracted <- ndx_extract_task_betas(betas_full, colnames_x, tasks_to_extract)
@@ -187,18 +179,14 @@ test_that("ndx_extract_task_betas extracts specified betas correctly", {
   expect_equal(extracted["reg2", ], betas_full["reg2", ])
   expect_equal(extracted["reg4", ], betas_full["reg4", ])
   
-  # Test with X_whitened_colnames not matching rownames of betas_whitened (should still work using X_whitened_colnames for indexing)
   betas_mismatched_rownames <- matrix(1:12, nrow = 4, ncol = 3)
-  rownames(betas_mismatched_rownames) <- paste0("original_beta_name", 1:4) # Give it different rownames
-  colnames_x <- paste0("reg", 1:4) # Target names for X
-  tasks_to_extract <- c("reg2", "reg4")
-
+  rownames(betas_mismatched_rownames) <- paste0("original_beta_name", 1:4)
+  
   expect_warning(
     extracted_mismatch_rn <- ndx_extract_task_betas(betas_mismatched_rownames, colnames_x, tasks_to_extract),
     "Rownames of betas_whitened do not match X_whitened_colnames"
   )
   expect_true(!is.null(extracted_mismatch_rn))
-  # We expect indexing to be based on colnames_x, so reg2 is the 2nd element, reg4 is the 4th
   expect_equal(extracted_mismatch_rn["reg2", ], betas_mismatched_rownames[2, ]) 
   expect_equal(extracted_mismatch_rn["reg4", ], betas_mismatched_rownames[4, ]) 
 })
@@ -208,7 +196,6 @@ test_that("ndx_extract_task_betas handles missing task regressors", {
   colnames_x <- c("taskA", "noise1", "taskB", "noise2")
   rownames(betas_full) <- colnames_x
   
-  # One missing, one present
   tasks_mixed <- c("taskA", "taskC_missing")
   expect_warning(
     extracted_mixed <- ndx_extract_task_betas(betas_full, colnames_x, tasks_mixed),
@@ -219,7 +206,6 @@ test_that("ndx_extract_task_betas handles missing task regressors", {
   expect_equal(rownames(extracted_mixed), "taskA")
   expect_equal(extracted_mixed["taskA", ], betas_full["taskA", ])
   
-  # All missing
   tasks_all_missing <- c("taskX", "taskY")
   expect_warning(
     extracted_all_missing <- ndx_extract_task_betas(betas_full, colnames_x, tasks_all_missing),
@@ -239,8 +225,7 @@ test_that("ndx_extract_task_betas input validation works", {
   expect_error(ndx_extract_task_betas(betas_good, colnames_good, character(0)), "task_regressor_names must be a non-empty character vector.")
   expect_error(ndx_extract_task_betas(betas_good, colnames_good, list("r1")), "task_regressor_names must be a non-empty character vector.")
   
-  # Zero row betas
-  betas_zero_row <- matrix(numeric(0), ncol=2, nrow=0) # Ensure it's a numeric matrix
+  betas_zero_row <- matrix(numeric(0), ncol=2, nrow=0) 
   colnames_zero_row <- character(0)
   expect_warning(ndx_extract_task_betas(betas_zero_row, colnames_zero_row, tasks_good), "Input betas_whitened has 0 regressors.")
   expect_null(suppressWarnings(ndx_extract_task_betas(betas_zero_row, colnames_zero_row, tasks_good)))
