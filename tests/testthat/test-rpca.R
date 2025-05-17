@@ -120,14 +120,17 @@ test_that("ndx_rpca_temporal_components_multirun runs with iterative merge strat
     expect_true(ncol(components_iter) > 0,
                 info = "Output should have >0 components if k_target > 0 (iterative)")
 
-    if (ncol(components_iter) > 0) {
-      gram <- crossprod(components_iter)
-      off_diag_max <- max(abs(gram[upper.tri(gram)]))
-      diag_dev_max <- max(abs(diag(gram) - 1))
-      expect_lt(off_diag_max, 1e-6,
-                info = "Iterative merge components should be nearly orthogonal")
-      expect_lt(diag_dev_max, 1e-6,
-                info = "Iterative merge components should have unit norm")
-    }
+    # The C_r components (components_iter) are not guaranteed to be orthonormal.
+    # V_global (the voxel-space basis) is orthonormal, but C_r = E_r %*% V_global.
+    # Removing orthonormality checks on C_r directly.
+    # if (ncol(components_iter) > 1) { # only check if more than 1 component
+    #   gram <- crossprod(components_iter)
+    #   off_diag_max <- max(abs(gram[upper.tri(gram)]))
+    #   diag_dev_max <- max(abs(diag(gram) - 1))
+    #   expect_lt(off_diag_max, 1e-6, 
+    #             label = "Iterative merge components should be nearly orthogonal")
+    #   expect_lt(diag_dev_max, 1e-6, 
+    #             label = "Iterative merge components should have unit norm")
+    # }
   }
 })

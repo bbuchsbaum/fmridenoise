@@ -126,6 +126,9 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
   unique_runs_overall <- unique(run_idx)
   run_lengths_overall <- as.numeric(table(factor(run_idx, levels = unique_runs_overall)))
   sf_overall <- fmrireg::sampling_frame(blocklens = run_lengths_overall, TR = TR)
+  message(sprintf("[ndx_estimate_initial_hrfs] sf_overall$total_samples: %s (class: %s)", 
+                  as.character(sf_overall$total_samples), class(sf_overall$total_samples)))
+  if (is.null(sf_overall$total_samples)) {message("sf_overall$total_samples IS NULL - THIS IS THE PROBLEM"); print(sf_overall)}
   
   for (cond_name_iter in conditions) { # Renamed loop variable
     message(paste("Processing HRF for condition:", cond_name_iter))
@@ -196,8 +199,22 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
 get_fir_design_matrix_for_condition <- function(condition_name, events_df,
                                                 sampling_frame, fir_taps, TR) {
   
-  total_timepoints <- sampling_frame$total_samples
+  total_timepoints <- sum(sampling_frame$blocklens)
   
+  # --- BEGIN DEBUG MESSAGES ---
+  message(sprintf("[get_fir_design_matrix_for_condition] Cond: %s", condition_name))
+  message(sprintf("  Input fir_taps: %s (class: %s), Input TR: %s (class: %s)", 
+                  as.character(fir_taps), class(fir_taps), as.character(TR), class(TR)))
+  message(sprintf("  sampling_frame$total_samples (total_timepoints): %s (class: %s)", 
+                  as.character(total_timepoints), class(total_timepoints)))
+  if (!is.numeric(total_timepoints) || length(total_timepoints) != 1 || !is.finite(total_timepoints) || total_timepoints < 0) {
+      message("  WARNING: total_timepoints is not a single positive finite number!")
+  }
+  if (!is.numeric(fir_taps) || length(fir_taps) != 1 || !is.finite(fir_taps) || fir_taps < 0) {
+      message("  WARNING: fir_taps is not a single positive finite number!")
+  }
+  # --- END DEBUG MESSAGES ---
+
   if (nrow(events_df) == 0 || fir_taps == 0) {
     # If no events or no FIR taps requested, return a zero matrix of correct dimensions
     # This is important for consistency if other conditions *do* produce regressors.

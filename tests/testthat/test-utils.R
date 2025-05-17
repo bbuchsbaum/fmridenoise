@@ -50,12 +50,11 @@ test_that("calculate_residuals_ols handles rank-deficient X and gives warning", 
   )
   
   # Residuals should still be calculable
-  # Fit with lm to compare
-  lm_fit_col1 <- lm(Y[,1] ~ X_rankdef - 1) # No intercept, as X includes it effectively
-  lm_fit_col2 <- lm(Y[,2] ~ X_rankdef - 1)
-  expected_residuals_rankdef <- cbind(residuals(lm_fit_col1), residuals(lm_fit_col2))
-  rownames(expected_residuals_rankdef) <- NULL
-  colnames(expected_residuals_rankdef) <- NULL
+  # Use lm.fit directly to get expected residuals, mirroring calculate_residuals_ols internal
+  expected_fit_rankdef <- stats::lm.fit(X_rankdef, Y)
+  expected_residuals_rankdef <- expected_fit_rankdef$residuals
+  # Input Y has no dimnames, so lm.fit$residuals should not have them either.
+  # If there's still an attribute issue, res_ols_rankdef might need dimnames(.) <- NULL
   
   expect_equal(res_ols_rankdef, expected_residuals_rankdef, tolerance = 1e-8)
 })

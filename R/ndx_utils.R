@@ -89,5 +89,48 @@ calculate_R2_voxelwise <- function(Y_observed, Y_residuals) {
   }
 
   R2 <- unname(R2)
+  R2[R2 < 0] <- 0 
   return(R2)
+}
+
+#' Calculate Denoising Efficacy Score (DES)
+#'
+#' DES = 1 - (Variance of current residuals / Variance of baseline residuals)
+#'
+#' @param current_residuals_unwhitened Numeric matrix or vector of residuals from the current denoising model.
+#' @param VAR_BASELINE_FOR_DES Numeric scalar, the variance of residuals from a baseline model 
+#'   (e.g., task-only GLM, or residuals from Pass 0 of ndx_initial_glm).
+#' @return Numeric scalar, the Denoising Efficacy Score. Returns NA if inputs are invalid.
+#' @importFrom stats var
+#' @export
+calculate_DES <- function(current_residuals_unwhitened, VAR_BASELINE_FOR_DES) {
+  if (is.null(current_residuals_unwhitened) || is.null(VAR_BASELINE_FOR_DES)) {
+    warning("calculate_DES: Inputs cannot be NULL.")
+    return(NA_real_)
+  }
+  if (!is.numeric(current_residuals_unwhitened) || !is.numeric(VAR_BASELINE_FOR_DES)) {
+    warning("calculate_DES: Inputs must be numeric.")
+    return(NA_real_)
+  }
+  if (length(VAR_BASELINE_FOR_DES) != 1 || !is.finite(VAR_BASELINE_FOR_DES)){
+    warning("calculate_DES: VAR_BASELINE_FOR_DES must be a single finite number.")
+    return(NA_real_)
+  }
+  if (VAR_BASELINE_FOR_DES <= 1e-9) { # Avoid division by zero or near-zero
+    warning("calculate_DES: VAR_BASELINE_FOR_DES is too close to zero. DES calculation may be unstable or meaningless.")
+    # Depending on convention, could return NA, 0, or 1 if current_residuals also have ~0 variance.
+    # If baseline variance is 0, any non-zero current residual variance would yield DES < 0 (formally -Inf).
+    # If both are 0, DES is undefined (0/0) or could be 1 (perfect explanation by baseline).
+    # For now, return NA as it's likely an issue with baseline variance calculation.
+    return(NA_real_)
+  }
+
+  var_current_residuals <- stats::var(as.vector(current_residuals_unwhitened), na.rm = TRUE)
+  if (!is.finite(var_current_residuals)){
+      warning("calculate_DES: Variance of current_residuals_unwhitened is not finite.")
+      return(NA_real_)
+  }
+
+  des <- 1 - (var_current_residuals / VAR_BASELINE_FOR_DES)
+  return(des)
 }

@@ -118,3 +118,118 @@ if (is.null(X_single_run)) {
   message(sprintf("dim(X_single_run): %s", paste(dim(X_single_run), collapse="x")))
   message(sprintf("colnames(X_single_run): %s", paste(colnames(X_single_run), collapse=", ")))
 } 
+
+# --- Test Data Setup from test-workflow.R ---
+TR_test <- 2.0
+n_time_per_run_test <- 50 
+n_runs_test <- 1
+total_timepoints_test <- n_time_per_run_test * n_runs_test
+n_voxels_test <- 5 
+
+Y_fmri_test <- matrix(rnorm(total_timepoints_test * n_voxels_test), 
+                      nrow = total_timepoints_test, 
+                      ncol = n_voxels_test)
+run_idx_test <- rep(1:n_runs_test, each = n_time_per_run_test)
+motion_params_test <- matrix(rnorm(total_timepoints_test * 3), 
+                             nrow = total_timepoints_test, ncol = 3)
+colnames(motion_params_test) <- paste0("mot", 1:3)
+
+events_test <- data.frame(
+  onsets = as.numeric(c(10, 30) * TR_test), 
+  durations = as.numeric(c(5, 5) * TR_test),   
+  condition = factor(c("TaskA", "TaskB")),
+  blockids = as.integer(rep(1, 2)) 
+)
+if (n_runs_test > 1) {
+  events_run2_test <- data.frame(
+    onsets = as.numeric(c(10, 30) * TR_test),
+    durations = as.numeric(c(5, 5) * TR_test),
+    condition = factor(c("TaskA", "TaskB")),
+    blockids = as.integer(rep(2, 2))
+  )
+  events_test <- rbind(events_test, events_run2_test)
+}
+
+# User options from test-workflow.R, ensuring all HRF options are present
+default_opts_hrf_from_workflow_code <- list(
+    hrf_fir_taps = 12L,
+    hrf_fir_span_seconds = 24, # Default from NDX_Process_Subject
+    good_voxel_R2_threshold = 0.05,
+    cv_folds = 5L,
+    lambda1_grid = 10^seq(-2, 1, length.out = 5),
+    lambda2_grid = 10^seq(-3, 0, length.out = 5),
+    hrf_min_good_voxels = 50L, # Default from NDX_Process_Subject
+    return_full_model = FALSE,
+    hrf_cluster_method = "none", 
+    num_hrf_clusters = 1 
+)
+
+user_options_test_from_workflow_file <- list(
+  opts_pass0 = list(
+    poly_degree = 1 
+  ),
+  opts_hrf = list(
+    hrf_fir_taps = 6,
+    hrf_fir_span_seconds = 12, 
+    good_voxel_R2_threshold = -Inf, 
+    lambda1_grid = c(0.1), 
+    lambda2_grid = c(0.1),
+    cv_folds = 2, 
+    hrf_min_good_voxels = 1, 
+    hrf_cluster_method = "none",
+    num_hrf_clusters = 1 
+  ),
+  opts_rpca = list(
+    k_global_target = 2, 
+    rpca_lambda_auto = FALSE,
+    rpca_lambda_fixed = 0.1 
+  ),
+  opts_spectral = list(
+    n_sine_candidates = 2, 
+    nyquist_guard_factor = 0.1
+  ),
+  opts_whitening = list(
+    global_ar_on_design = FALSE,
+    max_ar_failures_prop = 0.5
+  ),
+  opts_ridge = list(
+    lambda_ridge = 0.5
+  ),
+  task_regressor_names_for_extraction = c("task_TaskA", "task_TaskB"),
+  max_passes = 2, 
+  min_des_gain_convergence = -Inf, 
+  min_rho_noise_projection_convergence = -Inf 
+)
+
+# Ensure all required hrf options are present, using defaults from NDX_Process_Subject if necessary
+final_opts_hrf_for_debug <- utils::modifyList(default_opts_hrf_from_workflow_code, 
+                                          user_options_test_from_workflow_file$opts_hrf)
+user_options_for_debug_run <- user_options_test_from_workflow_file
+user_options_for_debug_run$opts_hrf <- final_opts_hrf_for_debug
+
+# --- Running NDX_Process_Subject for workflow test case ---
+message("--- Running NDX_Process_Subject for WORKFLOW test case ---")
+
+workflow_output <- ndx::NDX_Process_Subject(
+  Y_fmri = Y_fmri_test,
+  events = events_test,
+  motion_params = motion_params_test,
+  run_idx = run_idx_test,
+  TR = TR_test,
+  user_options = user_options_for_debug_run,
+  verbose = TRUE # CRITICAL: Ensure this verbose is TRUE
+)
+
+message("--- Result for workflow_output ---")
+if (is.null(workflow_output)) {
+  message("workflow_output is NULL")
+} else {
+  message(sprintf("workflow_output names: %s", paste(names(workflow_output), collapse=", ")))
+  message(sprintf("Number of passes completed: %d", workflow_output$num_passes_completed))
+  if (length(workflow_output$diagnostics_per_pass) > 0) {
+      message("Diagnostics for pass 1 DES:")
+      print(workflow_output$diagnostics_per_pass[[1]]$DES)
+      message("Diagnostics for pass 1 Rho:")
+      print(workflow_output$diagnostics_per_pass[[1]]$rho_noise_projection)
+  }
+} 
