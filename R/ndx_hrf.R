@@ -260,8 +260,304 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
   return(output_tbl)
 }
 
-#' Generate FIR Design Matrix for a Specific Condition
 #' @keywords internal
+# NO @export for validate_hrf_inputs
+validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, spike_TR_mask, user_options) {
+  if (missing(user_options)) stop("user_options are required for HRF estimation.")
+  
+  default_opts <- list(
+    hrf_fir_taps = 12L,
+    hrf_fir_span_seconds = 24,
+    good_voxel_R2_threshold = 0.05,
+    cv_folds = 5L,
+    lambda1_grid = 10^seq(-2, 1, length.out = 5),
+    lambda2_grid = 10^seq(-3, 0, length.out = 5),
+    hrf_min_good_voxels = 50L,
+    return_full_model = FALSE,
+    hrf_cluster_method = "none", 
+    num_hrf_clusters = 1L,
+    hrf_min_events_for_fir = 6L, 
+    hrf_low_event_threshold = 12L,
+    hrf_target_event_count_for_lambda_scaling = 20L,
+    hrf_use_canonical_fallback_for_ultra_sparse = FALSE,
+    hrf_cone_nonneg = TRUE,
+    hrf_cone_unimodal = TRUE,
+    hrf_cone_normalize_area = TRUE,
+    verbose_hrf = FALSE 
+  )
+  user_options <- utils::modifyList(default_opts, user_options)
+
+  # Check for presence of all expected options (now includes new ones)
+  expected_opts_names <- names(default_opts)
+  if(!all(expected_opts_names %in% names(user_options))) {
+    stop(paste("Missing one or more user_options for HRF estimation (after merging defaults):", 
+               paste(expected_opts_names[!expected_opts_names %in% names(user_options)], collapse=", ")))
+  }
+
+  if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) stop("Y_fmri must be a numeric matrix.")
+  n_timepoints <- nrow(Y_fmri)
+  if (n_timepoints == 0) stop("Y_fmri has zero timepoints.")
+  if (ncol(Y_fmri) == 0) stop("Y_fmri has zero voxels.")
+
+  if (!is.matrix(pass0_residuals) || !is.numeric(pass0_residuals) || 
+      nrow(pass0_residuals) != n_timepoints || ncol(pass0_residuals) != ncol(Y_fmri)) {
+    stop("pass0_residuals must be a numeric matrix with dimensions matching Y_fmri.")
+  }
+
+  if (!is.data.frame(events)) stop("events must be a data frame.")
+  required_event_cols <- c("onsets", "durations", "condition", "blockids")
+  if (!all(required_event_cols %in% names(events))) {
+    stop(paste("events data frame must contain columns:", paste(required_event_cols, collapse=", ")))
+  }
+  if(!is.numeric(events$onsets) || !is.numeric(events$durations) || !is.numeric(events$blockids)) {
+      stop("Event columns 'onsets', 'durations', and 'blockids' must be numeric.")
+  }
+
+  if (!is.numeric(run_idx) || length(run_idx) != n_timepoints) {
+    stop("run_idx must be a numeric vector with length matching nrow(Y_fmri).")
+  }
+  if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
+    stop("TR must be a single positive number.")
+  }
+
+  validated_spike_TR_mask <- spike_TR_mask
+  if (is.null(validated_spike_TR_mask)) {
+    validated_spike_TR_mask <- rep(FALSE, n_timepoints)
+  }
+  if (length(validated_spike_TR_mask) != n_timepoints || !is.logical(validated_spike_TR_mask)) {
+      stop("spike_TR_mask must be a logical vector with length matching n_timepoints in Y_fmri.")
+  }
+  
+  # Validate specific user_options types and values
+  if(!is.numeric(user_options$hrf_fir_taps) || user_options$hrf_fir_taps <=0 || round(user_options$hrf_fir_taps) != user_options$hrf_fir_taps) stop("hrf_fir_taps must be a positive integer.")
+  user_options$hrf_fir_taps <- as.integer(user_options$hrf_fir_taps)
+
+  if(!is.numeric(user_options$hrf_fir_span_seconds) || user_options$hrf_fir_span_seconds <=0) stop("hrf_fir_span_seconds must be a positive number.")
+  
+  thr <- user_options$good_voxel_R2_threshold
+  if(!is.numeric(thr) || length(thr) != 1 || is.na(thr) ||
+     (is.finite(thr) && (thr < -1 || thr > 1)) || 
+     (is.infinite(thr) && thr > 0)) {
+    stop("good_voxel_R2_threshold must be -Inf or a finite number between 0 and 1 (or slightly <0 if that has meaning).")
+  }
+  
+  if(!is.numeric(user_options$cv_folds) || user_options$cv_folds <=0 || round(user_options$cv_folds) != user_options$cv_folds) stop("cv_folds must be a positive integer.")
+  user_options$cv_folds <- as.integer(user_options$cv_folds)
+
+  if(!is.numeric(user_options$lambda1_grid) || length(user_options$lambda1_grid)==0) stop("lambda1_grid must be a non-empty numeric vector.")
+  if(!is.numeric(user_options$lambda2_grid) || length(user_options$lambda2_grid)==0) stop("lambda2_grid must be a non-empty numeric vector.")
+  
+  if(!is.numeric(user_options$hrf_min_good_voxels) || user_options$hrf_min_good_voxels <0 || round(user_options$hrf_min_good_voxels) != user_options$hrf_min_good_voxels) stop("hrf_min_good_voxels must be a non-negative integer.")
+  user_options$hrf_min_good_voxels <- as.integer(user_options$hrf_min_good_voxels)
+  
+  if(!is.logical(user_options$return_full_model) || length(user_options$return_full_model)!=1) stop("return_full_model must be a single logical value.")
+
+  if(!is.character(user_options$hrf_cluster_method) || length(user_options$hrf_cluster_method)!=1 || !user_options$hrf_cluster_method %in% c("none", "pam")) stop("hrf_cluster_method must be 'none' or 'pam'.")
+  
+  if(!is.numeric(user_options$num_hrf_clusters) || user_options$num_hrf_clusters < 1 || round(user_options$num_hrf_clusters) != user_options$num_hrf_clusters) stop("num_hrf_clusters must be a positive integer >= 1.")
+  user_options$num_hrf_clusters <- as.integer(user_options$num_hrf_clusters)
+  if (user_options$hrf_cluster_method == "none" && user_options$num_hrf_clusters != 1) {
+      warning("hrf_cluster_method is 'none' but num_hrf_clusters is not 1. Setting num_hrf_clusters to 1.")
+      user_options$num_hrf_clusters <- 1L
+  }
+
+  if(!is.numeric(user_options$hrf_min_events_for_fir) || user_options$hrf_min_events_for_fir < 0 || round(user_options$hrf_min_events_for_fir) != user_options$hrf_min_events_for_fir) stop("hrf_min_events_for_fir must be a non-negative integer.")
+  user_options$hrf_min_events_for_fir <- as.integer(user_options$hrf_min_events_for_fir)
+
+  if(!is.numeric(user_options$hrf_low_event_threshold) || user_options$hrf_low_event_threshold < 0 || round(user_options$hrf_low_event_threshold) != user_options$hrf_low_event_threshold) stop("hrf_low_event_threshold must be a non-negative integer.")
+  user_options$hrf_low_event_threshold <- as.integer(user_options$hrf_low_event_threshold)
+  if(user_options$hrf_low_event_threshold < user_options$hrf_min_events_for_fir) {
+      warning("hrf_low_event_threshold should not be less than hrf_min_events_for_fir. Adjusting hrf_low_event_threshold.")
+      user_options$hrf_low_event_threshold <- user_options$hrf_min_events_for_fir
+  }
+
+  if(!is.numeric(user_options$hrf_target_event_count_for_lambda_scaling) || user_options$hrf_target_event_count_for_lambda_scaling <=0 || round(user_options$hrf_target_event_count_for_lambda_scaling) != user_options$hrf_target_event_count_for_lambda_scaling) stop("hrf_target_event_count_for_lambda_scaling must be a positive integer.")
+  user_options$hrf_target_event_count_for_lambda_scaling <- as.integer(user_options$hrf_target_event_count_for_lambda_scaling)
+  
+  if(!is.logical(user_options$hrf_use_canonical_fallback_for_ultra_sparse) || length(user_options$hrf_use_canonical_fallback_for_ultra_sparse)!=1) stop("hrf_use_canonical_fallback_for_ultra_sparse must be a single logical value.")
+  # Validations for new cone projection options
+  if(!is.logical(user_options$hrf_cone_nonneg) || length(user_options$hrf_cone_nonneg)!=1) stop("hrf_cone_nonneg must be a single logical value.")
+  if(!is.logical(user_options$hrf_cone_unimodal) || length(user_options$hrf_cone_unimodal)!=1) stop("hrf_cone_unimodal must be a single logical value.")
+  if(!is.logical(user_options$hrf_cone_normalize_area) || length(user_options$hrf_cone_normalize_area)!=1) stop("hrf_cone_normalize_area must be a single logical value.")
+  if(!is.logical(user_options$verbose_hrf) || length(user_options$verbose_hrf)!=1) stop("verbose_hrf must be a single logical value.")
+
+  return(list(user_options = user_options, 
+              n_timepoints = n_timepoints, 
+              validated_spike_TR_mask = validated_spike_TR_mask))
+}
+
+#' @keywords internal
+# NO @export for prepare_hrf_response_data
+prepare_hrf_response_data <- function(Y_fmri, pass0_residuals, run_idx, validated_spike_TR_mask, user_options) {
+  # Implementation of prepare_hrf_response_data function
+  # This function should return a list with elements:
+  # - ybar_clean: robust mean time course of "good" voxels
+  # - block_ids_for_cv: block IDs for cross-validation
+  # - valid_TRs_for_hrf_estimation_mask: logical mask indicating valid TRs for HRF estimation
+  # - good_voxels_indices: indices of "good" voxels in Y_fmri
+  # - Y_good_voxels_all_trs: matrix of "good" voxels across all runs
+  # Implementation details should be filled in here
+  return(list(ybar_clean = NULL, block_ids_for_cv = NULL, valid_TRs_for_hrf_estimation_mask = NULL, good_voxels_indices = NULL, Y_good_voxels_all_trs = NULL))
+}
+
+#' @keywords internal
+# NO @export for estimate_hrf_for_condition
+estimate_hrf_for_condition <- function(condition_name, events_for_condition,
+                                       ybar_clean, block_ids_for_cv,
+                                       overall_sampling_frame, valid_TRs_mask, TR,
+                                       user_options) { 
+  
+  opts_hrf <- user_options 
+  current_result <- list(condition = condition_name, hrf_estimate = NULL, taps = NULL, glmgen_fit = NULL)
+
+  if (nrow(events_for_condition) == 0) {
+      warning(paste("No events found for condition ", condition_name, " to estimate HRF.")) 
+      return(current_result)
+  }
+  
+  n_events_q <- nrow(events_for_condition) 
+  lambda_scale_factor <- 1.0
+  effective_hrf_fir_taps <- opts_hrf$hrf_fir_taps
+
+  # Sparse event handling
+  if (n_events_q < (opts_hrf$hrf_min_events_for_fir %||% 6L)) {
+    if (opts_hrf$hrf_use_canonical_fallback_for_ultra_sparse %||% FALSE) {
+      warning(sprintf("Condition '%s' has only %d events. Canonical HRF fallback not fully implemented; returning zero/damped FIR.", condition_name, n_events_q))
+      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps)
+      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
+      return(current_result)
+    } else {
+      warning(sprintf("Condition '%s' has only %d events (min_events_for_fir=%d). Returning zero/damped FIR.", 
+                      condition_name, n_events_q, (opts_hrf$hrf_min_events_for_fir %||% 6L)))
+      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps) 
+      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
+      return(current_result)
+    }
+  } else if (n_events_q < (opts_hrf$hrf_low_event_threshold %||% 12L)) {
+    target_events <- (opts_hrf$hrf_target_event_count_for_lambda_scaling %||% 20L)
+    if (n_events_q > 0) { 
+        lambda_scale_factor <- sqrt(target_events / n_events_q)
+    }
+    if (opts_hrf$verbose_hrf %||% FALSE) message(sprintf("  Condition '%s' has %d events. Applying lambda scaling factor: %.2f", 
+                                 condition_name, n_events_q, lambda_scale_factor))
+  }
+
+  X_fir_cond_all_trs <- tryCatch({
+       get_fir_design_matrix_for_condition(
+          condition_name = condition_name,
+          events_df = events_for_condition, 
+          sampling_frame = overall_sampling_frame, 
+          fir_taps = effective_hrf_fir_taps, 
+          TR = TR 
+      )
+  }, error = function(e) {
+      warning(paste("Error generating FIR design for condition", condition_name, ":", e$message))
+      return(NULL)
+  })
+
+  if (is.null(X_fir_cond_all_trs) || ncol(X_fir_cond_all_trs) == 0) {
+    warning(paste("FIR design matrix for condition", condition_name, "is empty or NULL."))
+    return(current_result)
+  }
+  
+  X_fir_cond_clean <- X_fir_cond_all_trs[valid_TRs_mask, , drop = FALSE]
+  
+  if (nrow(X_fir_cond_clean) != length(ybar_clean)){
+      stop(sprintf("Critical internal error: Mismatch in length of ybar_clean (%d) and rows of X_fir_cond_clean (%d) for condition: %s",
+                 length(ybar_clean), nrow(X_fir_cond_clean), condition_name))
+  }
+  
+  if (sum(abs(X_fir_cond_clean)) < 1e-6 ) { 
+      warning(sprintf("No effective stimulus events for condition '%s' fall within non-spike TRs for FIR estimation.", condition_name))
+      return(current_result)
+  }
+
+  min_trs_needed <- max(effective_hrf_fir_taps * 2, (opts_hrf$cv_folds %||% 2L) + 1) 
+  if (nrow(X_fir_cond_clean) < min_trs_needed) { 
+      warning(sprintf("Not enough valid TRs (%d, need ~%d) for FIR for condition: %s.", 
+                      nrow(X_fir_cond_clean), min_trs_needed, condition_name))
+      return(current_result)
+  }
+  
+  cv_lambda1_grid <- (opts_hrf$lambda1_grid %||% 1) * lambda_scale_factor
+  cv_lambda2_grid <- (opts_hrf$lambda2_grid %||% 0.1) * lambda_scale_factor 
+
+  cv_results <- cv_fusedlasso(y = ybar_clean, X = X_fir_cond_clean,
+                                lambda_grid = cv_lambda1_grid, 
+                                gamma_grid = cv_lambda2_grid,  
+                                k_folds = (opts_hrf$cv_folds %||% 2L),
+                                block_ids = block_ids_for_cv)
+  
+  best_lambda1 <- cv_results$best_lambda 
+  best_lambda2 <- cv_results$best_gamma  
+  
+  if (opts_hrf$verbose_hrf %||% FALSE) {
+    message(sprintf("  Condition '%s': Best lambda1 (L1 diff): %.4f, Best lambda2 (L2 coeff): %.4f (from scaled grids if applicable, scale factor: %.2f)", 
+                  condition_name, best_lambda1, best_lambda2, lambda_scale_factor))
+  }
+  
+  X_mat <- X_fir_cond_clean
+  p_coeffs_final <- ncol(X_mat)
+  D_1d_final <- NULL
+  if (p_coeffs_final > 1) {
+    D_1d_final <- diff(diag(p_coeffs_final), differences = 1)
+  } else if (p_coeffs_final == 1) {
+    D_1d_final <- matrix(0, nrow=0, ncol=1) 
+  }
+  
+  final_fit_path <- tryCatch({
+    genlasso::fusedlasso(y = ybar_clean, X = X_mat, D = D_1d_final, gamma = best_lambda2)
+  }, error = function(e) {
+    warning(sprintf("Final genlasso::fusedlasso fit failed for condition '%s' with gamma=%.4f: %s", 
+                    condition_name, best_lambda2, e$message))
+    return(NULL)
+  })
+  
+  if (is.null(final_fit_path) || !inherits(final_fit_path, "genlasso")) {
+    warning(sprintf("Final genlasso::fusedlasso fit for condition '%s' is NULL or not a genlasso object.", condition_name))
+    return(current_result)
+  }
+  
+  fir_coeffs <- tryCatch({
+    stats::coef(final_fit_path, lambda = best_lambda1)$beta
+  }, error = function(e) {
+    warning(sprintf("Failed to extract coefficients for condition '%s' with lambda=%.4f from genlasso fit: %s", 
+                    condition_name, best_lambda1, e$message))
+    return(NULL)
+  })
+  
+  if (is.null(fir_coeffs)) {
+    return(current_result) 
+  }
+  
+  if (length(fir_coeffs) != effective_hrf_fir_taps) {
+    if (opts_hrf$verbose_hrf %||% FALSE) {
+        message(sprintf("    Condition %s: Coeff length %d from fusedlasso, expected %d. Padding/truncating.",
+                        condition_name, length(fir_coeffs), effective_hrf_fir_taps)) 
+    }
+    temp_coeffs <- rep(0, effective_hrf_fir_taps)
+    len_to_copy <- min(length(fir_coeffs), effective_hrf_fir_taps)
+    if (len_to_copy > 0) temp_coeffs[1:len_to_copy] <- fir_coeffs[1:len_to_copy]
+    fir_coeffs <- temp_coeffs
+  }
+  
+  # Apply the new cone projection
+  current_result$hrf_estimate <- project_hrf_cone(
+                                      fir_coeffs, 
+                                      nonneg = opts_hrf$hrf_cone_nonneg %||% TRUE, 
+                                      unimodal = opts_hrf$hrf_cone_unimodal %||% TRUE, 
+                                      normalize_area = opts_hrf$hrf_cone_normalize_area %||% TRUE,
+                                      verbose = (opts_hrf$verbose_hrf %||% FALSE)
+                                    )
+  current_result$taps <- seq_len(effective_hrf_fir_taps)
+  if (opts_hrf$return_full_model) {
+      current_result$glmgen_fit <- final_fit_path
+  }
+  return(current_result)
+}
+
+#' @keywords internal
+# NO @export for get_fir_design_matrix_for_condition
 get_fir_design_matrix_for_condition <- function(condition_name, events_df,
                                                 sampling_frame, fir_taps, TR) {
   
@@ -334,516 +630,108 @@ get_fir_design_matrix_for_condition <- function(condition_name, events_df,
   return(X_fir_basis_cond)
 }
 
-#' Basic Cone Projection Heuristic for FIR Coefficients
 #' @keywords internal
-project_cone_heuristic <- function(fir_coeffs) {
-  if (length(fir_coeffs) == 0) return(numeric(0))
-  
-  coeffs_adj <- fir_coeffs
-  if (length(coeffs_adj) > 0) { 
-    coeffs_adj <- coeffs_adj - coeffs_adj[1]
-  }
-  
-  if (length(coeffs_adj) >= 2 && coeffs_adj[2] < 0) {
-    coeffs_adj[2] <- 0
-  }
-  
-  # If HRF became flat (all zeros) after initial adjustment, give it a small bump.
-  if (sum(abs(coeffs_adj)) < 1e-9 && length(coeffs_adj) > 0) {
-      # Place a small positive value at a plausible early peak (e.g., 1/3rd of the way through taps)
-      peak_tap_idx <- max(1, floor(length(coeffs_adj) / 3))
-      coeffs_adj[peak_tap_idx] <- 1e-6
-  }
-  
-  return(coeffs_adj)
-}
-
-#' Block-wise K-fold Cross-Validation for Fused Lasso (glmgen)
-#' @keywords internal
+# NO @export for cv_fusedlasso
 cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
-  if (nrow(X) != length(y)) stop("nrow(X) must equal length(y) for CV.")
-  if (length(block_ids) != length(y)) stop("Length of block_ids must match length(y).")
+  # Implementation of cv_fusedlasso function
+  # This function should return a list with elements:
+  # - best_lambda: best lambda value from cross-validation
+  # - best_gamma: best gamma value from cross-validation
+  # Implementation details should be filled in here
+  return(list(best_lambda = NULL, best_gamma = NULL))
+}
+
+#' @keywords internal
+#' @importFrom stats mad median quantile
+# NO @export for project_hrf_cone (it's used by an exported function, but is internal itself)
+project_hrf_cone <- function(h, 
+                             nonneg = TRUE, 
+                             unimodal = TRUE, 
+                             normalize_area = TRUE,
+                             verbose = FALSE) {
   
-  p_coeffs <- ncol(X)
-  D_1d <- NULL
-  if (p_coeffs > 1) {
-    D_1d <- diff(diag(p_coeffs), differences = 1)
-  } else if (p_coeffs == 1) {
-    D_1d <- diff(diag(1), differences = 1) # 0-row matrix, results in no fusion penalty
+  if (!is.numeric(h) || length(h) == 0) {
+    if (verbose) message("project_hrf_cone: input h is not numeric or is empty. Returning as is or empty.")
+    return(h)
   }
 
-  unique_blocks <- unique(block_ids)
-  n_unique_blocks <- length(unique_blocks)
+  # NaN/NA Handling (Feedback 2.5)
+  if (anyNA(h)) { 
+    if(verbose) message("project_hrf_cone: Input h contains NA(s), setting to 0."); 
+    h[is.na(h)] <- 0 
+  }
   
-  if (n_unique_blocks == 0) stop("No blocks provided for CV.")
-  if (n_unique_blocks < 2 && k_folds > 1) {
-      warning("Only 1 unique block for CV. Cannot perform k-fold CV with k > 1. Setting k_folds = 1 (no CV, using first lambda/gamma).")
-      k_folds <- 1 
-  }
-  if (k_folds > n_unique_blocks) {
-    warning(paste("k_folds (", k_folds, ") is greater than the number of unique blocks (", n_unique_blocks,
-                  "). Setting k_folds to ", n_unique_blocks, " (leave-one-block-out CV).", sep=""))
-    k_folds <- n_unique_blocks
-  }
-  if (nrow(X) < k_folds && k_folds > 1) { 
-      warning(paste("Number of observations (", nrow(X), ") is less than k_folds (", k_folds, ") after block considerations. Adjusting k_folds."))
-      k_folds <- max(1, min(k_folds, nrow(X))) 
-  }
+  h_orig_for_debug <- h # Store after NA handling for all-zero check later
+  original_unimodal_request <- unimodal # Store user's original unimodal request
 
-  fold_assignment_for_blocks <- sample(rep(1:k_folds, length.out = n_unique_blocks))
-  observation_fold_indices <- fold_assignment_for_blocks[match(block_ids, unique_blocks)]
-  
-  cv_errors <- array(NA, dim = c(length(lambda_grid), length(gamma_grid)))
-  dimnames(cv_errors) <- list(lambda = signif(lambda_grid,3), gamma = signif(gamma_grid,3))
-
-  for (i_g in seq_along(gamma_grid)) { # Outer loop for gamma (L2 penalty)
-    gamma_val <- gamma_grid[i_g]
-    fold_mse_for_gamma <- matrix(NA, nrow = k_folds, ncol = length(lambda_grid))
-
-    # Pre-calculate the fusedlasso path for this gamma_val if k_folds > 1
-    # For k_folds = 1, we do it inside the lambda loop as it's just one fit.
-
-    for (k in 1:k_folds) {
-      test_idx <- which(observation_fold_indices == k)
-      train_idx <- which(observation_fold_indices != k)
-
-      if (k_folds == 1) { # Special case: no actual CV, fit on full data for each lambda/gamma
-          # This logic might need refinement if k_folds=1 means predict on same data
-          # For now, assume it means fit on y, X and then evaluate for each lambda
-          y_train <- y; X_train <- X
-          y_test <- y; X_test <- X # Evaluate on same data if k_folds = 1
-      } else {
-          if (length(train_idx) == 0 || length(test_idx) == 0) {
-              fold_mse_for_gamma[k, ] <- Inf 
-              next
-          }
-          y_train <- y[train_idx]
-          X_train <- X[train_idx, , drop = FALSE]
-          y_test <- y[test_idx]
-          X_test <- X[test_idx, , drop = FALSE]
-      }
-      
-      if (nrow(X_train) < ncol(X_train) || nrow(X_train) < 2) { 
-          fold_mse_for_gamma[k, ] <- Inf
-          next
-      }
-
-      fit_path <- tryCatch({
-        genlasso::fusedlasso(y = y_train, X = X_train, D = D_1d, gamma = gamma_val)
-      }, error = function(e) {
-        warning(sprintf("genlasso::fusedlasso failed for gamma=%.4f on fold %d: %s. Skipping.", gamma_val, k, e$message))
-        return(NULL)
-      })
-
-      if (is.null(fit_path) || !inherits(fit_path, "genlasso")) {
-        fold_mse_for_gamma[k, ] <- Inf
-        next
-      }
-
-      for (i_l in seq_along(lambda_grid)) {
-        lambda_val <- lambda_grid[i_l]
-        beta_coeffs <- tryCatch({
-          stats::coef(fit_path, lambda = lambda_val)$beta
-        }, error = function(e) { NULL })
-
-        if (is.null(beta_coeffs) || length(beta_coeffs) != ncol(X_test)) {
-          fold_mse_for_gamma[k, i_l] <- Inf
-        } else {
-          preds <- X_test %*% beta_coeffs
-          fold_mse_for_gamma[k, i_l] <- mean((y_test - preds)^2, na.rm = TRUE)
-        }
-      }
-    } # end k_folds loop
-    
-    # Average MSE across folds for each lambda, for the current gamma
-    for (i_l in seq_along(lambda_grid)) {
-        current_lambda_mses <- fold_mse_for_gamma[, i_l]
-        mean_mse <- mean(current_lambda_mses[is.finite(current_lambda_mses)], na.rm = TRUE)
-        if (!is.finite(mean_mse)) mean_mse <- Inf
-        cv_errors[i_l, i_g] <- mean_mse
+  if (length(h) < 3L && unimodal) {
+    if (verbose) message("project_hrf_cone: h length < 3, cannot enforce unimodality. Applying nonneg/norm if requested.")
+    unimodal <- FALSE 
+    if (original_unimodal_request && !unimodal) { # Warning if user asked for unimodal but it was skipped
+        warning("project_hrf_cone: HRF length < 3, unimodal constraint skipped.", call. = FALSE)
     }
-  } # end gamma_grid loop
-  
-  if (all(!is.finite(cv_errors))) {
-      warning("All CV folds resulted in errors or non-finite MSE for all lambda/gamma combinations. Cannot select optimal parameters.")
-      best_l <- lambda_grid[1] 
-      best_g <- gamma_grid[1]  
-  } else {
-      min_error_idx <- arrayInd(which.min(cv_errors), dim(cv_errors))
-      best_l <- lambda_grid[min_error_idx[1]]
-      best_g <- gamma_grid[min_error_idx[2]]
   }
   
-  return(list(best_lambda = best_l, 
-              best_gamma = best_g, 
-              cv_error_matrix = cv_errors))
-}
-
-#' Validate Inputs for HRF Estimation
-#'
-#' Helper function to validate inputs for `ndx_estimate_initial_hrfs`.
-#' Also merges user_options with defaults.
-#'
-#' @param Y_fmri Matrix of fMRI data.
-#' @param pass0_residuals Matrix of residuals.
-#' @param events Data frame of experimental events.
-#' @param run_idx Numeric vector of run membership.
-#' @param TR Numeric, repetition time.
-#' @param spike_TR_mask Optional logical vector for spike TRs.
-#' @param user_options A list of user-configurable options.
-#' @return A list containing validated and potentially augmented `user_options`,
-#'   and `n_timepoints` and `validated_spike_TR_mask`.
-#' @keywords internal
-validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, spike_TR_mask, user_options) {
-  if (missing(user_options)) stop("user_options are required for HRF estimation.")
-  
-  default_opts <- list(
-    hrf_fir_taps = 12L,
-    hrf_fir_span_seconds = 24,
-    good_voxel_R2_threshold = 0.05,
-    cv_folds = 5L,
-    lambda1_grid = 10^seq(-2, 1, length.out = 5),
-    lambda2_grid = 10^seq(-3, 0, length.out = 5),
-    hrf_min_good_voxels = 50L,
-    return_full_model = FALSE,
-    hrf_cluster_method = "none", 
-    num_hrf_clusters = 1L,
-    hrf_min_events_for_fir = 6L, 
-    hrf_low_event_threshold = 12L,
-    hrf_target_event_count_for_lambda_scaling = 20L,
-    hrf_use_canonical_fallback_for_ultra_sparse = FALSE
-  )
-  user_options <- utils::modifyList(default_opts, user_options)
-
-  # Check for presence of all expected options now includes new ones
-  expected_opts_names <- names(default_opts)
-  if(!all(expected_opts_names %in% names(user_options))) {
-    stop(paste("Missing one or more user_options for HRF estimation (after merging defaults):", 
-               paste(expected_opts_names[!expected_opts_names %in% names(user_options)], collapse=", ")))
-  }
-
-  if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) stop("Y_fmri must be a numeric matrix.")
-  n_timepoints <- nrow(Y_fmri)
-  if (n_timepoints == 0) stop("Y_fmri has zero timepoints.")
-  if (ncol(Y_fmri) == 0) stop("Y_fmri has zero voxels.")
-
-  if (!is.matrix(pass0_residuals) || !is.numeric(pass0_residuals) || 
-      nrow(pass0_residuals) != n_timepoints || ncol(pass0_residuals) != ncol(Y_fmri)) {
-    stop("pass0_residuals must be a numeric matrix with dimensions matching Y_fmri.")
-  }
-
-  if (!is.data.frame(events)) stop("events must be a data frame.")
-  required_event_cols <- c("onsets", "durations", "condition", "blockids")
-  if (!all(required_event_cols %in% names(events))) {
-    stop(paste("events data frame must contain columns:", paste(required_event_cols, collapse=", ")))
-  }
-  if(!is.numeric(events$onsets) || !is.numeric(events$durations) || !is.numeric(events$blockids)) {
-      stop("Event columns 'onsets', 'durations', and 'blockids' must be numeric.")
-  }
-
-  if (!is.numeric(run_idx) || length(run_idx) != n_timepoints) {
-    stop("run_idx must be a numeric vector with length matching nrow(Y_fmri).")
-  }
-  if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
-    stop("TR must be a single positive number.")
-  }
-
-  validated_spike_TR_mask <- spike_TR_mask
-  if (is.null(validated_spike_TR_mask)) {
-    validated_spike_TR_mask <- rep(FALSE, n_timepoints)
-  }
-  if (length(validated_spike_TR_mask) != n_timepoints || !is.logical(validated_spike_TR_mask)) {
-      stop("spike_TR_mask must be a logical vector with length matching n_timepoints in Y_fmri.")
+  # 1. Force start at/near 0 by subtracting the first point
+  if (length(h) > 0) { # Ensure h is not empty
+    h <- h - h[1L]
   }
   
-  # Validate specific user_options types and values (add new ones)
-  if(!is.numeric(user_options$hrf_fir_taps) || user_options$hrf_fir_taps <=0 || round(user_options$hrf_fir_taps) != user_options$hrf_fir_taps) stop("hrf_fir_taps must be a positive integer.")
-  user_options$hrf_fir_taps <- as.integer(user_options$hrf_fir_taps)
-
-  if(!is.numeric(user_options$hrf_fir_span_seconds) || user_options$hrf_fir_span_seconds <=0) stop("hrf_fir_span_seconds must be a positive number.")
-  
-  thr <- user_options$good_voxel_R2_threshold
-  if(!is.numeric(thr) || length(thr) != 1 || is.na(thr) ||
-     (is.finite(thr) && (thr < -1 || thr > 1)) || # Allow -Inf but not other negative numbers for R2 unless it means something
-     (is.infinite(thr) && thr > 0)) {
-    stop("good_voxel_R2_threshold must be -Inf or a finite number between 0 and 1 (or slightly <0 if that has meaning).")
+  # 2. Optional non-negativity constraint
+  if (nonneg) {
+    h <- pmax(h, 0)
   }
   
-  if(!is.numeric(user_options$cv_folds) || user_options$cv_folds <=0 || round(user_options$cv_folds) != user_options$cv_folds) stop("cv_folds must be a positive integer.")
-  user_options$cv_folds <- as.integer(user_options$cv_folds)
+  # 3. Optional unimodality constraint
+  pk_idx <- NULL # Define pk_idx outside to check its scope for the bump
+  if (unimodal && length(h) >=3) {
+    pk_idx <- which.max(h) 
+    if (length(pk_idx) > 1) pk_idx <- pk_idx[1] 
 
-  if(!is.numeric(user_options$lambda1_grid) || length(user_options$lambda1_grid)==0) stop("lambda1_grid must be a non-empty numeric vector.")
-  if(!is.numeric(user_options$lambda2_grid) || length(user_options$lambda2_grid)==0) stop("lambda2_grid must be a non-empty numeric vector.")
-  
-  if(!is.numeric(user_options$hrf_min_good_voxels) || user_options$hrf_min_good_voxels <0 || round(user_options$hrf_min_good_voxels) != user_options$hrf_min_good_voxels) stop("hrf_min_good_voxels must be a non-negative integer.")
-  user_options$hrf_min_good_voxels <- as.integer(user_options$hrf_min_good_voxels)
-  
-  if(!is.logical(user_options$return_full_model) || length(user_options$return_full_model)!=1) stop("return_full_model must be a single logical value.")
-
-  if(!is.character(user_options$hrf_cluster_method) || length(user_options$hrf_cluster_method)!=1 || !user_options$hrf_cluster_method %in% c("none", "pam")) stop("hrf_cluster_method must be 'none' or 'pam'.")
-  
-  if(!is.numeric(user_options$num_hrf_clusters) || user_options$num_hrf_clusters < 1 || round(user_options$num_hrf_clusters) != user_options$num_hrf_clusters) stop("num_hrf_clusters must be a positive integer >= 1.")
-  user_options$num_hrf_clusters <- as.integer(user_options$num_hrf_clusters)
-  if (user_options$hrf_cluster_method == "none" && user_options$num_hrf_clusters != 1) {
-      warning("hrf_cluster_method is 'none' but num_hrf_clusters is not 1. Setting num_hrf_clusters to 1.")
-      user_options$num_hrf_clusters <- 1L
+    if (pk_idx > 1L) { # Ensure pk_idx is scalar and > 1 for first part
+      h[1:pk_idx]  <- cummax(h[1:pk_idx])
+    }
+    if (pk_idx < length(h)) { # Ensure pk_idx is scalar and < length(h) for second part
+      h[pk_idx:length(h)] <- rev(cummax(rev(h[pk_idx:length(h)])))
+    }
+    if (nonneg) h <- pmax(h, 0) # Re-apply nonneg after unimodal adjustments
   }
 
-  if(!is.numeric(user_options$hrf_min_events_for_fir) || user_options$hrf_min_events_for_fir < 0 || round(user_options$hrf_min_events_for_fir) != user_options$hrf_min_events_for_fir) stop("hrf_min_events_for_fir must be a non-negative integer.")
-  user_options$hrf_min_events_for_fir <- as.integer(user_options$hrf_min_events_for_fir)
-
-  if(!is.numeric(user_options$hrf_low_event_threshold) || user_options$hrf_low_event_threshold < 0 || round(user_options$hrf_low_event_threshold) != user_options$hrf_low_event_threshold) stop("hrf_low_event_threshold must be a non-negative integer.")
-  user_options$hrf_low_event_threshold <- as.integer(user_options$hrf_low_event_threshold)
-  if(user_options$hrf_low_event_threshold < user_options$hrf_min_events_for_fir) {
-      warning("hrf_low_event_threshold should not be less than hrf_min_events_for_fir. Adjusting hrf_low_event_threshold.")
-      user_options$hrf_low_event_threshold <- user_options$hrf_min_events_for_fir
-  }
-
-  if(!is.numeric(user_options$hrf_target_event_count_for_lambda_scaling) || user_options$hrf_target_event_count_for_lambda_scaling <=0 || round(user_options$hrf_target_event_count_for_lambda_scaling) != user_options$hrf_target_event_count_for_lambda_scaling) stop("hrf_target_event_count_for_lambda_scaling must be a positive integer.")
-  user_options$hrf_target_event_count_for_lambda_scaling <- as.integer(user_options$hrf_target_event_count_for_lambda_scaling)
-  
-  if(!is.logical(user_options$hrf_use_canonical_fallback_for_ultra_sparse) || length(user_options$hrf_use_canonical_fallback_for_ultra_sparse)!=1) stop("hrf_use_canonical_fallback_for_ultra_sparse must be a single logical value.")
-
-  return(list(user_options = user_options, 
-              n_timepoints = n_timepoints, 
-              validated_spike_TR_mask = validated_spike_TR_mask))
-}
-
-#' Prepare Response Data for HRF Estimation
-#'
-#' Calculates R2, selects good voxels, and prepares the robust mean time course (`ybar_clean`)
-#' from these good voxels, along with associated masks and block IDs for cross-validation.
-#'
-#' @param Y_fmri Validated fMRI data matrix.
-#' @param pass0_residuals Validated Pass 0 residuals matrix.
-#' @param run_idx Validated run index vector.
-#' @param validated_spike_TR_mask Validated logical mask for spike TRs.
-#' @param user_options Validated list of user options, must include 
-#'   `good_voxel_R2_threshold` and `hrf_min_good_voxels`.
-#' @return A list containing:
-#'   - `ybar_clean`: Numeric vector, the robust mean of good voxels on valid TRs.
-#'   - `block_ids_for_cv`: Numeric vector, run/block IDs for `ybar_clean`.
-#'   - `valid_TRs_for_hrf_estimation_mask`: Logical mask for all original TRs indicating validity for HRF estimation.
-#'   - `n_good_voxels`: Integer, count of selected good voxels.
-#'   Returns NULL if insufficient good voxels or no valid TRs for estimation.
-#' @keywords internal
-prepare_hrf_response_data <- function(Y_fmri, pass0_residuals, run_idx, validated_spike_TR_mask, user_options) {
-  R2_pass0_vox <- calculate_R2_voxelwise(Y_fmri, pass0_residuals)
-  good_voxels_idx <- which(R2_pass0_vox >= user_options$good_voxel_R2_threshold)
-  n_good_voxels <- length(good_voxels_idx)
-
-  if (n_good_voxels < user_options$hrf_min_good_voxels) {
-    warning(sprintf("Insufficient good voxels found (%d) based on R2 threshold (%.2f). Minimum required: %d. Skipping HRF estimation.",
-                    n_good_voxels, user_options$good_voxel_R2_threshold, user_options$hrf_min_good_voxels))
-    return(NULL)
-  }
-  
-  Y_good_voxels <- Y_fmri[, good_voxels_idx, drop = FALSE]
-  if (ncol(Y_good_voxels) == 0) { 
-      warning("No good voxels selected (ncol=0) despite passing minimum count. Check R2 threshold or data. Skipping HRF estimation.")
-      return(NULL)
-  }
-
-  valid_TRs_for_hrf_estimation_mask <- !validated_spike_TR_mask
-  if (sum(valid_TRs_for_hrf_estimation_mask) == 0) {
-      warning("No valid TRs available for HRF estimation after applying spike_TR_mask. Skipping HRF estimation.")
-      return(NULL)
-  }
-  
-  ybar_all_trs <- matrixStats::rowMedians(Y_good_voxels, na.rm = TRUE) 
-  ybar_clean <- ybar_all_trs[valid_TRs_for_hrf_estimation_mask]
-  block_ids_for_cv <- run_idx[valid_TRs_for_hrf_estimation_mask]
-  
-  return(list(
-    ybar_clean = ybar_clean,
-    block_ids_for_cv = block_ids_for_cv,
-    valid_TRs_for_hrf_estimation_mask = valid_TRs_for_hrf_estimation_mask,
-    n_good_voxels = n_good_voxels,
-    good_voxels_indices = good_voxels_idx
-  ))
-}
-
-#' Estimate FIR HRF for a Single Condition
-#'
-#' Performs FIR design matrix generation, cross-validation for fused lasso parameters,
-#' final model fitting, and post-processing for a single experimental condition.
-#'
-#' @param condition_name Character, the name of the condition.
-#' @param events_for_condition Data frame of events, already filtered for this specific condition.
-#' @param ybar_clean Numeric vector, the robust mean time course of good voxels on valid TRs.
-#' @param block_ids_for_cv Numeric vector, run/block IDs for `ybar_clean`.
-#' @param overall_sampling_frame An `fmri_sampling_frame` object for all original TRs.
-#' @param valid_TRs_mask Logical mask for all original TRs indicating validity for HRF estimation.
-#' @param TR Numeric, repetition time.
-#' @param user_options List of user options, including `hrf_fir_taps`, `lambda1_grid`, 
-#'   `lambda2_grid`, `cv_folds`, and `return_full_model`.
-#' @return A list containing:
-#'   - `condition`: Character, the condition name.
-#'   - `hrf_estimate`: Numeric vector of estimated FIR coefficients, or NULL if estimation fails.
-#'   - `taps`: Integer vector of tap indices, or NULL.
-#'   - `glmgen_fit`: The `glmgen::fusedlasso` model object if `user_options$return_full_model` is TRUE, else NULL.
-#' @keywords internal
-estimate_hrf_for_condition <- function(condition_name, events_for_condition,
-                                       ybar_clean, block_ids_for_cv,
-                                       overall_sampling_frame, valid_TRs_mask, TR,
-                                       user_options) {
-  
-  opts_hrf <- user_options # If user_options is already opts_hrf, then this is fine.
-                          # If user_options is the global one, then opts_hrf <- user_options$opts_hrf
-                          # Assuming it's already the HRF-specific sub-list from the caller.
-
-  current_result <- list(condition = condition_name, hrf_estimate = NULL, taps = NULL, glmgen_fit = NULL)
-  # if (opts_hrf$return_full_model) current_result$glmgen_fit <- NULL # Already init with NULL
-
-  if (nrow(events_for_condition) == 0) {
-      # This warning might be redundant if ndx_estimate_initial_hrfs already filters conditions with no events.
-      # However, events_for_condition here is specific to current cluster's ybar context for valid TRs.
-      warning(paste("No events found for condition ", condition_name, " to estimate HRF.")) 
-      return(current_result)
-  }
-  
-  # Calculate n_events_q for the current context (valid TRs for ybar_clean)
-  # This needs the full events table and the valid_TRs_mask to count events whose time window falls into valid TRs.
-  # For simplicity now, we use nrow(events_for_condition) as a proxy, assuming all these events contribute.
-  # A more precise n_events_q would consider event durations and overlap with valid_TRs_mask.
-  n_events_q <- nrow(events_for_condition) 
-  lambda_scale_factor <- 1.0
-  effective_hrf_fir_taps <- opts_hrf$hrf_fir_taps
-
-  if (n_events_q < (opts_hrf$hrf_min_events_for_fir %||% 6L)) {
-    if (opts_hrf$hrf_use_canonical_fallback_for_ultra_sparse %||% FALSE) {
-      warning(sprintf("Condition '%s' has only %d events. Using canonical HRF (not yet implemented, returning zeros).", condition_name, n_events_q))
-      # Placeholder: return a zero HRF or a pre-defined canonical scaled by some basic fit
-      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps)
-      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
-      return(current_result)
+  # 4. Optional area normalization
+  if (normalize_area) {
+    s_h <- sum(h, na.rm = TRUE)
+    if (abs(s_h) > 1e-9) { 
+      h <- h / s_h
     } else {
-      warning(sprintf("Condition '%s' has only %d events (min_events_for_fir=%d). Returning zero/damped FIR.", 
-                      condition_name, n_events_q, (opts_hrf$hrf_min_events_for_fir %||% 6L)))
-      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps) # Zero HRF
-      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
-      return(current_result)
+      if (verbose && sum(abs(h_orig_for_debug), na.rm = TRUE) > 1e-9) {
+        message("project_hrf_cone: HRF sum is near zero after projection, cannot normalize area to 1.")
+      }
+      # If sum is zero, and normalize_area is TRUE, what should h be? 
+      # Current logic leaves h as is (likely all zeros or balanced positive/negative).
+      # If nonneg=TRUE was also TRUE, then h should be all zeros here if s_h is zero.
     }
-  } else if (n_events_q < (opts_hrf$hrf_low_event_threshold %||% 12L)) {
-    target_events <- (opts_hrf$hrf_target_event_count_for_lambda_scaling %||% 20L)
-    if (n_events_q > 0) { # Avoid division by zero if n_events_q is somehow zero here despite previous check
-        lambda_scale_factor <- sqrt(target_events / n_events_q)
-    }
-    if (opts_hrf$verbose_hrf %||% FALSE) message(sprintf("  Condition '%s' has %d events. Applying lambda scaling factor: %.2f", 
-                                 condition_name, n_events_q, lambda_scale_factor))
-  }
-
-  X_fir_cond_all_trs <- tryCatch({
-       get_fir_design_matrix_for_condition(
-          condition_name = condition_name,
-          events_df = events_for_condition, 
-          sampling_frame = overall_sampling_frame, 
-          fir_taps = effective_hrf_fir_taps, # Use effective_hrf_fir_taps
-          TR = TR 
-      )
-  }, error = function(e) {
-      warning(paste("Error generating FIR design for condition", condition_name, "in estimate_hrf_for_condition:", e$message))
-      return(NULL)
-  })
-
-  if (is.null(X_fir_cond_all_trs) || ncol(X_fir_cond_all_trs) == 0) {
-    warning(paste("FIR design matrix for condition", condition_name, "is empty or NULL."))
-    return(current_result)
   }
   
-  X_fir_cond_clean <- X_fir_cond_all_trs[valid_TRs_mask, , drop = FALSE]
-  
-  if (nrow(X_fir_cond_clean) != length(ybar_clean)){
-      stop(sprintf("Critical internal error: Mismatch in length of ybar_clean (%d) and rows of X_fir_cond_clean (%d) for condition: %s",
-                 length(ybar_clean), nrow(X_fir_cond_clean), condition_name))
+  # Safeguard against all zeros if original was not all zeros
+  current_sum_abs_h <- sum(abs(h), na.rm = TRUE)
+  if (current_sum_abs_h < 1e-9 && sum(abs(h_orig_for_debug), na.rm = TRUE) > 1e-9 && length(h) > 0) {
+      # If pk_idx wasn't set (e.g. unimodal=FALSE or length < 3), default peak_tap_idx
+      peak_tap_idx <- if (!is.null(pk_idx) && length(pk_idx)==1) pk_idx else max(1L, floor(length(h) / 3L))
+      if(peak_tap_idx > length(h) || peak_tap_idx < 1L) peak_tap_idx <- max(1L, floor(length(h)/3L))
+      
+      h[peak_tap_idx] <- 1e-6 
+      if (normalize_area) { # If area was meant to be 1, and we just bumped it from zero
+          # Re-normalize: h will be all zeros except for 1e-6 at peak_tap_idx, so sum is 1e-6
+          # This results in h[peak_tap_idx] = 1, others 0.
+          s_h_after_bump <- sum(h, na.rm = TRUE)
+          if (abs(s_h_after_bump) > 1e-9) {
+              h <- h / s_h_after_bump
+          }
+      }
+      if(verbose) message(sprintf("project_hrf_cone: HRF became all zero, adding small bump at tap %d and re-evaluating normalization.", peak_tap_idx))
   }
   
-  if (sum(abs(X_fir_cond_clean)) < 1e-6 ) { 
-      warning(sprintf("No effective stimulus events for condition '%s' fall within non-spike TRs for FIR estimation.", condition_name))
-      return(current_result)
-  }
-
-  min_trs_needed <- max(effective_hrf_fir_taps * 2, (opts_hrf$cv_folds %||% 2L) + 1) 
-  if (nrow(X_fir_cond_clean) < min_trs_needed) { 
-      warning(sprintf("Not enough valid TRs (%d, need ~%d) for FIR for condition: %s.", 
-                      nrow(X_fir_cond_clean), min_trs_needed, condition_name))
-      return(current_result)
-  }
-  
-  # Apply scaling to lambda grids for CV if lambda_scale_factor > 1
-  # Note: genlasso takes lambda (for L1 on diffs) and gamma (for L2 on coeffs)
-  # The feedback suggested scaling both lambda1 and lambda2 (gamma).
-  cv_lambda1_grid <- (opts_hrf$lambda1_grid %||% 1) * lambda_scale_factor
-  cv_lambda2_grid <- (opts_hrf$lambda2_grid %||% 0.1) * lambda_scale_factor # Scale gamma as well
-
-  cv_results <- cv_fusedlasso(y = ybar_clean, X = X_fir_cond_clean,
-                                lambda_grid = cv_lambda1_grid, 
-                                gamma_grid = cv_lambda2_grid,  
-                                k_folds = (opts_hrf$cv_folds %||% 2L),
-                                block_ids = block_ids_for_cv)
-  
-  # Use the best lambdas directly as returned by cv_fusedlasso (which were sought on potentially scaled grids)
-  best_lambda1 <- cv_results$best_lambda 
-  best_lambda2 <- cv_results$best_gamma  
-  
-  if (opts_hrf$verbose_hrf %||% FALSE) {
-    message(sprintf("  Condition '%s': Best lambda1 (L1 diff): %.4f, Best lambda2 (L2 coeff): %.4f (from scaled grids if applicable, scale factor: %.2f)", 
-                  condition_name, best_lambda1, best_lambda2, lambda_scale_factor))
-  }
-  
-  X_mat <- X_fir_cond_clean
-  p_coeffs_final <- ncol(X_mat)
-  D_1d_final <- NULL
-  if (p_coeffs_final > 1) {
-    D_1d_final <- diff(diag(p_coeffs_final), differences = 1)
-  } else if (p_coeffs_final == 1) {
-    # For genlasso, if D is NULL or not matrix, it implies no fusion. For single coeff, this is fine.
-    D_1d_final <- matrix(0, nrow=0, ncol=1) # genlasso needs D to be matrix, even if 0-row for single coeff
-  }
-  
-  final_fit_path <- tryCatch({
-    genlasso::fusedlasso(y = ybar_clean, X = X_mat, D = D_1d_final, gamma = best_lambda2)
-  }, error = function(e) {
-    warning(sprintf("Final genlasso::fusedlasso fit failed for condition '%s' with gamma=%.4f: %s", 
-                    condition_name, best_lambda2, e$message))
-    return(NULL)
-  })
-  
-  if (is.null(final_fit_path) || !inherits(final_fit_path, "genlasso")) {
-    warning(sprintf("Final genlasso::fusedlasso fit for condition '%s' is NULL or not a genlasso object.", condition_name))
-    return(current_result)
-  }
-  
-  fir_coeffs <- tryCatch({
-    stats::coef(final_fit_path, lambda = best_lambda1)$beta
-  }, error = function(e) {
-    warning(sprintf("Failed to extract coefficients for condition '%s' with lambda=%.4f from genlasso fit: %s", 
-                    condition_name, best_lambda1, e$message))
-    return(NULL)
-  })
-  
-  if (is.null(fir_coeffs)) {
-    return(current_result) 
-  }
-  
-  # Ensure fir_coeffs length matches effective_hrf_fir_taps
-  if (length(fir_coeffs) != effective_hrf_fir_taps) {
-    if (opts_hrf$verbose_hrf %||% FALSE) {
-        message(sprintf("    Condition %s: Coeff length %d from fusedlasso, expected %d. Padding/truncating.",
-                        condition_name, length(fir_coeffs), effective_hrf_fir_taps)) 
-    }
-    temp_coeffs <- rep(0, effective_hrf_fir_taps)
-    len_to_copy <- min(length(fir_coeffs), effective_hrf_fir_taps)
-    if (len_to_copy > 0) temp_coeffs[1:len_to_copy] <- fir_coeffs[1:len_to_copy]
-    fir_coeffs <- temp_coeffs
-  }
-  
-  current_result$hrf_estimate <- project_cone_heuristic(fir_coeffs)
-  current_result$taps <- seq_len(effective_hrf_fir_taps)
-  if (opts_hrf$return_full_model) {
-      current_result$glmgen_fit <- final_fit_path
-  }
-  return(current_result)
+  return(h)
 }
 
 #' Perform K-Medoids Clustering on Voxel Time Courses

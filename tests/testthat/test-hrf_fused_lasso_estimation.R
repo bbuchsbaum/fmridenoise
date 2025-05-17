@@ -22,7 +22,7 @@ events_df <- data.frame(
 sf <- fmrireg::sampling_frame(blocklens = n_time, TR = TR)
 
 # Step 3: FIR design matrix and synthetic data
-X <- fmridenoise:::get_fir_design_matrix_for_condition(
+X <- get_fir_design_matrix_for_condition(
   condition_name = "A",
   events_df = events_df,
   sampling_frame = sf,
@@ -44,10 +44,13 @@ user_opts <- list(
   hrf_target_event_count_for_lambda_scaling = 20,
   hrf_use_canonical_fallback_for_ultra_sparse = FALSE,
   verbose_hrf = FALSE,
-  return_full_model = FALSE
+  return_full_model = FALSE,
+  hrf_cone_nonneg = TRUE,
+  hrf_cone_unimodal = TRUE,
+  hrf_cone_normalize_area = TRUE
 )
 
-est_res <- fmridenoise:::estimate_hrf_for_condition(
+est_res <- ndx:::estimate_hrf_for_condition(
   condition_name = "A",
   events_for_condition = events_df,
   ybar_clean = ybar_clean,
@@ -59,7 +62,13 @@ est_res <- fmridenoise:::estimate_hrf_for_condition(
 )
 
 # Step 5: verify accuracy and structure
-true_hrf_adj <- fmridenoise:::project_cone_heuristic(true_hrf)
+true_hrf_adj <- ndx:::project_hrf_cone(true_hrf, 
+                                     nonneg = user_opts$hrf_cone_nonneg %||% TRUE, 
+                                     unimodal = user_opts$hrf_cone_unimodal %||% TRUE, 
+                                     normalize_area = user_opts$hrf_cone_normalize_area %||% TRUE,
+                                     verbose = user_opts$verbose_hrf %||% FALSE
+                                     )
+
 cor_val <- stats::cor(est_res$hrf_estimate, true_hrf_adj)
 
 

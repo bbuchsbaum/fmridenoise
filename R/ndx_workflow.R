@@ -67,12 +67,17 @@ NDX_Process_Subject <- function(Y_fmri,
     hrf_min_good_voxels = 50L,
     return_full_model = FALSE,
     hrf_cluster_method = "none", # Default to no clustering
-    num_hrf_clusters = 1,      # Consistent with no clustering
+    num_hrf_clusters = 1L,       # Consistent with no clustering
     # Options for sparse event handling in HRF estimation (NDX-12)
     hrf_min_events_for_fir = 6L, 
     hrf_low_event_threshold = 12L,
     hrf_target_event_count_for_lambda_scaling = 20L,
-    hrf_use_canonical_fallback_for_ultra_sparse = FALSE # Default to attempting scaled/damped FIR
+    hrf_use_canonical_fallback_for_ultra_sparse = FALSE, # Default to attempting scaled/damped FIR
+    # New options for project_hrf_cone
+    hrf_cone_nonneg = TRUE,
+    hrf_cone_unimodal = TRUE,
+    hrf_cone_normalize_area = TRUE,
+    verbose_hrf = FALSE # Added from previous refactor, ensure it's here
   )
   opts_hrf <- utils::modifyList(default_opts_hrf, user_options$opts_hrf %||% list())
 
