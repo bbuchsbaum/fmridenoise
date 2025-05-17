@@ -80,13 +80,9 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
     message(sprintf("  ndx_spectral_sines: nw was reduced from %s to %s to be compatible with series length %d.", 
                     original_nw, nw, length(mean_residual_for_spectrum)))
   }
-  if (nw <= 0) { 
+  if (nw <= 0) {
       warning(sprintf("nw became %.2f after adjustment. Must be > 0. Aborting spectral step.", nw))
-      # Consistent return type for failure after initial checks
-      res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
-      attr(res_empty, "freq_hz") <- numeric(0)
-      attr(res_empty, "freq_rad_s") <- numeric(0)
-      return(res_empty)
+      return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   # Adjust k_tapers (Feedback 2.2 for as.integer)
@@ -98,12 +94,9 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   }
 
   if (k_tapers < 1) {
-    warning(sprintf("k_tapers became %d after adjustment (nw=%.2f, series_length=%d). Must be >= 1. Aborting spectral step.", 
+    warning(sprintf("k_tapers became %d after adjustment (nw=%.2f, series_length=%d). Must be >= 1. Aborting spectral step.",
                     k_tapers, nw, length(mean_residual_for_spectrum)))
-    res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
-    attr(res_empty, "freq_hz") <- numeric(0)
-    attr(res_empty, "freq_rad_s") <- numeric(0)
-    return(res_empty)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   mt_res <- NULL
@@ -151,7 +144,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   else if (verbose && is.null(peak_info_all)) message("  findpeaks returned NULL.")
 
   if (is.null(peak_info_all) || nrow(peak_info_all) == 0) {
-    message("No initial peaks found in the spectrum by pracma::findpeaks.")
+    if (verbose) message("No initial peaks found in the spectrum by pracma::findpeaks.")
     return(NULL)
   }
   
@@ -172,7 +165,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   else if (verbose && is.null(peak_info)) message("  peak_info is NULL after prominence filter (should be 0-row matrix if no peaks pass).")
 
   if (is.null(peak_info) || nrow(peak_info) == 0) {
-    message(sprintf("No significant peaks found after prominence filter (threshold: %.4g).", prom_thresh))
+    if (verbose) message(sprintf("No significant peaks found after prominence filter (threshold: %.4g).", prom_thresh))
     return(NULL)
   }
   
@@ -196,10 +189,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   if (length(selected_frequencies_hz) == 0) {
     if (verbose) message("No peaks selected after uniqueness filter to generate sine/cosine pairs.")
     # Return consistent empty matrix with attributes
-    res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
-    attr(res_empty, "freq_hz") <- numeric(0)
-    attr(res_empty, "freq_rad_s") <- numeric(0)
-    return(res_empty)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   omega_rad_s <- 2 * pi * selected_frequencies_hz # Convert Hz to radians/sec
@@ -237,8 +227,10 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   attr(U_spectral_sines, "freq_hz") <- selected_frequencies_hz
   attr(U_spectral_sines, "freq_rad_s") <- omega_rad_s
 
-  message(sprintf("Generated %d sine/cosine pairs from %d spectral peaks.",
-                  ncol(U_spectral_sines) / 2, length(selected_frequencies_hz)))
+  if (verbose) {
+    message(sprintf("Generated %d sine/cosine pairs from %d spectral peaks.",
+                    ncol(U_spectral_sines) / 2, length(selected_frequencies_hz)))
+  }
 
   # Call Select_Significant_Spectral_Regressors
   selected_regressors <- Select_Significant_Spectral_Regressors(
@@ -250,6 +242,18 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   )
 
   return(selected_regressors) # This will now be a 0-col matrix with attrs if none selected
+}
+
+#' Create an empty matrix for spectral regressors
+#'
+#' @keywords internal
+.empty_spec_matrix <- function(n_rows) {
+  res <- matrix(numeric(0), nrow = n_rows, ncol = 0,
+                dimnames = list(NULL, character(0)))
+  attr(res, "freq_hz") <- numeric(0)
+  attr(res, "freq_rad_s") <- numeric(0)
+  attr(res, "selected_pair_indices") <- integer(0)
+  res
 }
 
 #' Select Spectral Regressors via Information Criterion
@@ -277,19 +281,11 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
                                                    verbose = FALSE) {
   if (is.null(U_candidates) || !is.matrix(U_candidates)) { # Allow 0-col matrix from caller
     if (verbose) message("[Select_SSR] U_candidates is NULL or not a matrix. Returning empty attributed matrix.")
-    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
-    attr(res_empty, "freq_hz") <- numeric(0)
-    attr(res_empty, "freq_rad_s") <- numeric(0)
-    attr(res_empty, "selected_pair_indices") <- integer(0)
-    return(res_empty)
+    return(.empty_spec_matrix(length(y)))
   }
   if (ncol(U_candidates) < 2 && ncol(U_candidates) != 0 ) { # if not 0, must be pairs
      warning("[Select_SSR] U_candidates columns not in pairs or empty. Returning empty matrix.")
-    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
-    attr(res_empty, "freq_hz") <- numeric(0)
-    attr(res_empty, "freq_rad_s") <- numeric(0)
-    attr(res_empty, "selected_pair_indices") <- integer(0)
-    return(res_empty)
+    return(.empty_spec_matrix(length(y)))
   }
   
   criterion <- match.arg(criterion)
@@ -298,13 +294,11 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
   # If U_candidates is a 0-column matrix (e.g. no peaks from ndx_spectral_sines), n_pairs will be 0
   if (n_pairs < 1) {
     if (verbose) message("[Select_SSR] No candidate pairs to select from. Returning empty attributed matrix.")
-    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
-    # Propagate attributes if U_candidates had them, even if empty
+    res_empty <- .empty_spec_matrix(length(y))
     hz_attr <- attr(U_candidates, "freq_hz")
     rad_attr <- attr(U_candidates, "freq_rad_s")
     attr(res_empty, "freq_hz") <- if (!is.null(hz_attr)) hz_attr else numeric(0)
-    attr(res_empty, "freq_rad_s") <- if (!is.null(rad_attr)) rad_attr else numeric(0) 
-    attr(res_empty, "selected_pair_indices") <- integer(0)
+    attr(res_empty, "freq_rad_s") <- if (!is.null(rad_attr)) rad_attr else numeric(0)
     return(res_empty)
   }
 
@@ -381,11 +375,7 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
 
   if (length(selected) == 0) {
       if (verbose) message("[Select_SSR] No pairs selected. Returning 0-column matrix with attributes.")
-      res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
-      attr(res_empty, "freq_hz") <- numeric(0)
-      attr(res_empty, "freq_rad_s") <- numeric(0)
-      attr(res_empty, "selected_pair_indices") <- integer(0)
-      return(res_empty)
+      return(.empty_spec_matrix(length(y)))
   }
   cols_final <- unlist(lapply(selected, function(i) (2 * (i - 1) + 1):(2 * i)))
   res <- U_candidates[, cols_final, drop = FALSE]
