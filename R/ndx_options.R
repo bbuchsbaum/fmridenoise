@@ -1,0 +1,118 @@
+#' ND-X User Options Reference
+#'
+#' This provides documentation for all configuration options available in the
+#' ND-X package functions. Most functions accept a `user_options` parameter,
+#' which is a list containing these configuration options organized into
+#' sub-lists for different modules.
+#'
+#' @section General Options:
+#' \describe{
+#'   \item{`max_passes`}{Maximum number of iterations for the refinement loop. Default: 3}
+#'   \item{`min_des_gain_convergence`}{Minimum DES gain to continue iteration. Default: 0.005}
+#'   \item{`min_rho_noise_projection_convergence`}{Minimum rho noise projection to continue iteration. Default: 0.01}
+#'   \item{`task_regressor_names_for_extraction`}{Character vector of task regressor names to extract betas for}
+#'   \item{`verbose`}{Logical, whether to print progress messages. Default: TRUE}
+#' }
+#'
+#' @section Pass0 (Initial GLM) Options:
+#' \describe{
+#'   \item{`poly_degree`}{Integer, polynomial drift degree. Default: 1}
+#' }
+#'
+#' @section HRF Estimation Options:
+#' \describe{
+#'   \item{`hrf_fir_taps`}{Integer, number of FIR taps. Default: 12}
+#'   \item{`hrf_fir_span_seconds`}{Numeric, span of FIR in seconds. Default: 24}
+#'   \item{`good_voxel_R2_threshold`}{Numeric, R-squared threshold for good voxels. Default: 0.05}
+#'   \item{`cv_folds`}{Integer, number of cross-validation folds. Default: 5}
+#'   \item{`lambda1_grid`}{Numeric vector, grid for lambda1 hyperparameter. Default: 10^seq(-2, 1, length.out = 5)}
+#'   \item{`lambda2_grid`}{Numeric vector, grid for lambda2 hyperparameter. Default: 10^seq(-3, 0, length.out = 5)}
+#'   \item{`hrf_min_good_voxels`}{Integer, minimum number of good voxels. Default: 50}
+#'   \item{`return_full_model`}{Logical, whether to return full model. Default: FALSE}
+#'   \item{`hrf_cluster_method`}{Character, clustering method. Default: "none"}
+#'   \item{`num_hrf_clusters`}{Integer, number of HRF clusters. Default: 1}
+#'   \item{`hrf_min_events_for_fir`}{Integer, minimum events for FIR. Default: 6}
+#'   \item{`hrf_low_event_threshold`}{Integer, low event threshold. Default: 12}
+#'   \item{`hrf_target_event_count_for_lambda_scaling`}{Integer, target event count. Default: 20}
+#'   \item{`hrf_use_canonical_fallback_for_ultra_sparse`}{Logical, use canonical fallback. Default: FALSE}
+#'   \item{`hrf_cone_nonneg`}{Logical, non-negativity constraint. Default: TRUE}
+#'   \item{`hrf_cone_unimodal`}{Logical, unimodality constraint. Default: TRUE}
+#'   \item{`hrf_cone_normalize_area`}{Logical, normalize area. Default: TRUE}
+#'   \item{`verbose_hrf`}{Logical, verbose output for HRF. Default: FALSE}
+#' }
+#'
+#' @section RPCA Options:
+#' \describe{
+#'   \item{`k_global_target`}{Integer, target number of global components. Default: 5}
+#'   \item{`rpca_lambda_auto`}{Numeric, RPCA lambda parameter (auto mode). Default is implementation-specific}
+#'   \item{`k_elbow_drop_ratio`}{Numeric, drop ratio for elbow detection. Default: 0.02}
+#'   \item{`k_rpca_min`}{Integer, minimum k for RPCA. Default: 20}
+#'   \item{`k_rpca_max`}{Integer, maximum k for RPCA. Default: 50}
+#'   \item{`rpca_spike_mad_thresh`}{Numeric, MAD threshold for spikes. Default: 3.0}
+#'   \item{`rpca_spike_percentile_thresh`}{Numeric, percentile threshold for spikes. Default: 0.98}
+#' }
+#'
+#' @section Spectral Options:
+#' \describe{
+#'   \item{`n_sine_candidates`}{Integer, number of sine candidates. Default: 10}
+#'   \item{`nyquist_guard_factor`}{Numeric, Nyquist guard factor. Default: 0.9}
+#'   \item{`k_tapers`}{Integer, number of tapers. Default: 5}
+#'   \item{`nw`}{Numeric, time-bandwidth product. Default: 3}
+#' }
+#'
+#' @section Whitening Options:
+#' \describe{
+#'   \item{`order`}{Integer, AR order. Default: 2}
+#'   \item{`global_ar_on_design`}{Logical, apply global AR on design. Default: TRUE}
+#'   \item{`max_ar_failures_prop`}{Numeric, maximum proportion of AR failures. Default: 0.1}
+#' }
+#'
+#' @section Ridge Options:
+#' \describe{
+#'   \item{`lambda_ridge`}{Numeric, isotropic ridge penalty. Default: 1.0}
+#'   \item{`anisotropic_ridge_enable`}{Logical, enable anisotropic ridge. Default: TRUE}
+#'   \item{`lambda_signal`}{Numeric, lambda for signal components. Renamed to lambda_perp_signal. Default: 0.1}
+#'   \item{`lambda_perp_signal`}{Numeric, perpendicular lambda for signal. Default: 0.1}
+#'   \item{`lambda_noise_rpca`}{Numeric, lambda for RPCA noise. Default: 1.0}
+#'   \item{`lambda_noise_spectral`}{Numeric, lambda for spectral noise. Default: 1.0}
+#'   \item{`lambda_noise_other`}{Numeric, lambda for other noise. Default: 1.0}
+#'   \item{`lambda_parallel_noise`}{Numeric, parallel lambda for noise, generic. Default: 10.0}
+#'   \item{`ridge_gcv_folds`}{Integer, GCV folds. Default: 5}
+#'   \item{`ridge_update_lambda_aggressiveness`}{Logical, update lambda aggressiveness. Default: FALSE}
+#'   \item{`lambda_noise_gdlite`}{Numeric, lambda for GLMdenoise PCs. Default: 1.0}
+#'   \item{`lambda_noise_ndx_unique`}{Numeric, lambda for unique NDX components. Default: 1.0}
+#' }
+#'
+#' @section Annihilation Mode Options:
+#' \describe{
+#'   \item{`annihilation_enable_mode`}{Logical, enable annihilation mode. Default: FALSE}
+#'   \item{`annihilation_gdlite_poly_degree`}{Integer, polynomial degree for GLMdenoise. Default: 1}
+#'   \item{`annihilation_gdlite_k_max`}{Integer, maximum k for GLMdenoise. Default: 30}
+#'   \item{`annihilation_gdlite_r2_thresh_noise_pool`}{Numeric, R2 threshold for noise pool. Default: 0.05}
+#'   \item{`annihilation_gdlite_tsnr_thresh_noise_pool`}{Numeric, tSNR threshold for noise pool. Default: 30}
+#'   \item{`annihilation_gdlite_r2_thresh_good_voxels`}{Numeric, R2 threshold for good voxels. Default: 0.05}
+#' }
+#'
+#' @examples
+#' # Example of setting user options for NDX_Process_Subject
+#' user_options <- list(
+#'   max_passes = 5,
+#'   min_des_gain_convergence = 0.01,
+#'   opts_pass0 = list(poly_degree = 2),
+#'   opts_hrf = list(
+#'     hrf_fir_taps = 16,
+#'     good_voxel_R2_threshold = 0.1
+#'   ),
+#'   opts_ridge = list(
+#'     anisotropic_ridge_enable = TRUE,
+#'     lambda_perp_signal = 0.5,
+#'     lambda_noise_rpca = 2.0
+#'   ),
+#'   opts_annihilation = list(
+#'     annihilation_enable_mode = TRUE,
+#'     annihilation_gdlite_k_max = 25
+#'   )
+#' )
+#'
+#' @name ndx_user_options
+NULL 

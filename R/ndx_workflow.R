@@ -22,10 +22,13 @@
 #'   - `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
 #'   - `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
 #'   - `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
+#'   - `opts_annihilation`: List of options for Annihilation Mode (e.g., `annihilation_enable_mode`, `annihilation_gdlite_k_max`).
 #'   - `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
 #'   - `max_passes` (integer): Maximum number of iterations for the refinement loop. Default: 3.
 #'   - `min_des_gain_convergence` (numeric): Minimum DES gain to continue iteration. Default: 0.005.
 #'   - `min_rho_noise_projection_convergence` (numeric): Minimum rho noise projection to continue iteration. Default: 0.01. 
+#'
+#' See `?ndx_user_options` for a complete reference of all available options.
 #' @param verbose Logical, if TRUE, print progress messages. Default: TRUE.
 #'
 #' @return A list containing key outputs from the workflow, such as:

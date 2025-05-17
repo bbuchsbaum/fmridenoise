@@ -72,8 +72,36 @@ ndx_generate_html_report <- function(workflow_output,
     grDevices::dev.off()
   }
 
+  # ---- Annihilation Mode diagnostics plot (if enabled) ----
+  gdlite_png <- NULL
+  if (!is.null(workflow_output$annihilation_mode_active) && workflow_output$annihilation_mode_active &&
+      !is.null(workflow_output$gdlite_diagnostics) && !is.null(workflow_output$gdlite_diagnostics$r2_vals_by_k)) {
+    
+    gdlite_png <- file.path(output_dir, "gdlite_r2_by_k.png")
+    r2_vals <- workflow_output$gdlite_diagnostics$r2_vals_by_k
+    optimal_k <- workflow_output$gdlite_diagnostics$optimal_k
+    k_vals <- seq_along(r2_vals)
+    
+    grDevices::png(gdlite_png, width = 600, height = 400)
+    graphics::plot(k_vals, r2_vals, type = "b", col = "darkgreen",
+                  xlab = "Number of PCs (k)", ylab = "Cross-validated R²",
+                  main = "GLMdenoise-Lite: Cross-validated R² by Number of PCs")
+    
+    # Highlight optimal k if available
+    if (!is.null(optimal_k) && optimal_k > 0 && optimal_k <= length(r2_vals)) {
+      graphics::points(optimal_k, r2_vals[optimal_k], pch = 19, col = "red", cex = 1.5)
+      graphics::text(optimal_k, r2_vals[optimal_k], 
+                    labels = sprintf("k=%d", optimal_k),
+                    pos = 3, col = "red")
+    }
+    
+    grDevices::dev.off()
+  }
+
   # ---- Adaptive hyperparameters ----
-  last_diag <- workflow_output$diagnostics_per_pass[[workflow_output$num_passes_completed]]
+  # Get the diagnostics from the last completed pass
+  last_pass_num <- workflow_output$num_passes_completed
+  last_diag <- workflow_output$diagnostics_per_pass[[last_pass_num]]
 
   html_lines <- c(
     "<html>",
@@ -96,19 +124,106 @@ ndx_generate_html_report <- function(workflow_output,
       sprintf("<img src='%s' alt='Spike carpet'>", basename(carpet_png)))
   }
 
+  # Add Annihilation Mode diagnostics if active
+  if (!is.null(workflow_output$annihilation_mode_active) && workflow_output$annihilation_mode_active) {
+    html_lines <- c(html_lines, "<h2>Annihilation Mode Diagnostics</h2>")
+    
+    if (!is.null(gdlite_png)) {
+      html_lines <- c(html_lines, 
+        sprintf("<img src='%s' alt='GLMdenoise-Lite R² by k'>", basename(gdlite_png)))
+    }
+    
+    html_lines <- c(html_lines, "<ul>")
+    
+    if (!is.null(workflow_output$gdlite_pcs)) {
+      html_lines <- c(html_lines, 
+        sprintf("<li>Number of GLMdenoise PCs used: %d</li>", ncol(workflow_output$gdlite_pcs)))
+    }
+    
+    if (!is.null(workflow_output$gdlite_diagnostics)) {
+      if (!is.null(workflow_output$gdlite_diagnostics$optimal_k)) {
+        html_lines <- c(html_lines, 
+          sprintf("<li>Optimal number of GLMdenoise PCs: %d</li>", workflow_output$gdlite_diagnostics$optimal_k))
+      }
+      
+      if (!is.null(workflow_output$gdlite_diagnostics$noise_pool_mask)) {
+        noise_pool_size <- sum(workflow_output$gdlite_diagnostics$noise_pool_mask)
+        total_voxels <- length(workflow_output$gdlite_diagnostics$noise_pool_mask)
+        html_lines <- c(html_lines, 
+          sprintf("<li>Noise pool voxels: %d (%.1f%% of total)</li>", 
+                  noise_pool_size, 100 * noise_pool_size / total_voxels))
+      }
+      
+      if (!is.null(workflow_output$gdlite_diagnostics$good_voxels_mask)) {
+        good_voxels_size <- sum(workflow_output$gdlite_diagnostics$good_voxels_mask)
+        total_voxels <- length(workflow_output$gdlite_diagnostics$good_voxels_mask)
+        html_lines <- c(html_lines, 
+          sprintf("<li>Good voxels: %d (%.1f%% of total)</li>", 
+                  good_voxels_size, 100 * good_voxels_size / total_voxels))
+      }
+    }
+    
+    html_lines <- c(html_lines, "</ul>")
+  }
+
   html_lines <- c(html_lines, "<h2>Key Adaptive Hyperparameters</h2>", "<ul>")
-  if (!is.null(last_diag$k_rpca_global)) {
-    html_lines <- c(html_lines, sprintf("<li>k_rpca_global: %s</li>", last_diag$k_rpca_global))
+  
+  # Extract hyperparameters from the correct location in last_diag
+  if (!is.null(last_diag$pass_options) && !is.null(last_diag$pass_options$current_rpca_k_target)) {
+    html_lines <- c(html_lines, 
+      sprintf("<li>k_rpca_global: %d</li>", last_diag$pass_options$current_rpca_k_target))
+  } else if (!is.null(last_diag$k_rpca_global)) {
+    html_lines <- c(html_lines, 
+      sprintf("<li>k_rpca_global: %d</li>", last_diag$k_rpca_global))
   }
+  
   if (!is.null(last_diag$num_spectral_sines)) {
-    html_lines <- c(html_lines, sprintf("<li>num_spectral_sines: %s</li>", last_diag$num_spectral_sines))
+    html_lines <- c(html_lines, 
+      sprintf("<li>Number of spectral sine pairs: %d</li>", last_diag$num_spectral_sines))
   }
+  
+  # Add ridge regression lambda parameters
   if (!is.null(last_diag$lambda_parallel_noise)) {
-    html_lines <- c(html_lines, sprintf("<li>lambda_parallel_noise: %.3f</li>", last_diag$lambda_parallel_noise))
+    html_lines <- c(html_lines, 
+      sprintf("<li>lambda_parallel_noise (noise regressors): %.3f</li>", last_diag$lambda_parallel_noise))
   }
+  
   if (!is.null(last_diag$lambda_perp_signal)) {
-    html_lines <- c(html_lines, sprintf("<li>lambda_perp_signal: %.3f</li>", last_diag$lambda_perp_signal))
+    html_lines <- c(html_lines, 
+      sprintf("<li>lambda_perp_signal (task/signal regressors): %.3f</li>", last_diag$lambda_perp_signal))
   }
+  
+  # For Annihilation Mode, add unique component lambda if available
+  if (!is.null(workflow_output$annihilation_mode_active) && 
+      workflow_output$annihilation_mode_active &&
+      !is.null(last_diag$pass_options$annihilation_active_this_pass) &&
+      last_diag$pass_options$annihilation_active_this_pass) {
+      
+    html_lines <- c(html_lines, "<li><b>Annihilation Mode was active for this pass</b></li>")
+  }
+  
+  # Add convergence info
+  html_lines <- c(html_lines, 
+    sprintf("<li>Number of passes completed: %d</li>", workflow_output$num_passes_completed))
+  
+  if (workflow_output$num_passes_completed < length(workflow_output$diagnostics_per_pass)) {
+    html_lines <- c(html_lines, "<li>Convergence: Reached before maximum passes</li>")
+  } else {
+    html_lines <- c(html_lines, "<li>Convergence: Reached maximum passes</li>")
+  }
+  
+  # Add final DES value
+  if (!is.null(last_diag$DES)) {
+    html_lines <- c(html_lines, 
+      sprintf("<li>Final Denoising Efficacy Score (DES): %.4f</li>", last_diag$DES))
+  }
+  
+  # Add final rho noise projection if available
+  if (!is.null(last_diag$rho_noise_projection)) {
+    html_lines <- c(html_lines, 
+      sprintf("<li>Final Rho Noise Projection: %.4f</li>", last_diag$rho_noise_projection))
+  }
+  
   html_lines <- c(html_lines, "</ul>", "</body>", "</html>")
 
   html_path <- file.path(output_dir, filename)

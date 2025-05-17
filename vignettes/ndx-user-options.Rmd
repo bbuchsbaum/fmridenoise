@@ -1,0 +1,217 @@
+---
+title: "ND-X User Options Guide"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ND-X User Options Guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Introduction
+
+This vignette provides detailed guidance on configuring the ND-X pipeline through its user options system. The ND-X pipeline is highly customizable, with numerous options to control each aspect of the denoising process. This guide will help you understand the available options and how to use them effectively.
+
+## Basic Usage
+
+The ND-X workflow functions, most notably `NDX_Process_Subject()`, accept a `user_options` parameter that controls all aspects of the denoising process. This parameter is a list with both top-level options and nested option lists for specific modules.
+
+```{r eval=FALSE}
+library(fmridenoise)
+
+# Example of setting user options
+user_options <- list(
+  # Top-level options
+  max_passes = 3,
+  min_des_gain_convergence = 0.005,
+  task_regressor_names_for_extraction = c("face", "house"),
+  
+  # Module-specific options
+  opts_pass0 = list(
+    poly_degree = 2
+  ),
+  
+  opts_hrf = list(
+    hrf_fir_taps = 12,
+    good_voxel_R2_threshold = 0.05
+  ),
+  
+  # ... and so on for other modules
+)
+
+# Use in NDX_Process_Subject
+results <- NDX_Process_Subject(
+  Y_fmri = fmri_data,
+  events = event_data,
+  motion_params = motion_data,
+  run_idx = run_indices,
+  TR = 2.0,
+  user_options = user_options
+)
+```
+
+## Module-Specific Options
+
+### Initial GLM (Pass 0)
+
+The `opts_pass0` controls the initial GLM for residual generation:
+
+```{r eval=FALSE}
+opts_pass0 = list(
+  poly_degree = 2  # Controls polynomial drift regressors
+)
+```
+
+### HRF Estimation
+
+The `opts_hrf` list controls the HRF estimation process, including FIR parameters, clustering options, and constraints:
+
+```{r eval=FALSE}
+opts_hrf = list(
+  hrf_fir_taps = 12,               # Number of FIR taps
+  hrf_fir_span_seconds = 24,       # Span of FIR in seconds
+  good_voxel_R2_threshold = 0.05,  # R² threshold for good voxels
+  cv_folds = 5,                    # Cross-validation folds
+  hrf_cluster_method = "none",     # Clustering method (none, kmeans, pam)
+  num_hrf_clusters = 1,            # Number of HRF clusters
+  hrf_cone_nonneg = TRUE,          # Non-negativity constraint
+  hrf_cone_unimodal = TRUE,        # Unimodality constraint
+  hrf_cone_normalize_area = TRUE   # Normalize area under curve
+)
+```
+
+### RPCA Component Extraction
+
+The `opts_rpca` list controls Robust PCA for temporal noise component extraction:
+
+```{r eval=FALSE}
+opts_rpca = list(
+  k_global_target = 20,           # Target global components 
+  k_elbow_drop_ratio = 0.02,      # Elbow detection parameter
+  k_rpca_min = 10,                # Minimum components
+  k_rpca_max = 50                 # Maximum components
+)
+```
+
+### Spectral Component Extraction
+
+The `opts_spectral` list controls spectral analysis for frequency-based noise components:
+
+```{r eval=FALSE}
+opts_spectral = list(
+  n_sine_candidates = 10,         # Number of sine candidates
+  nyquist_guard_factor = 0.9,     # Nyquist guard factor 
+  k_tapers = 5,                   # Number of tapers
+  nw = 3                          # Time-bandwidth product
+)
+```
+
+### AR Whitening
+
+The `opts_whitening` list controls the pre-whitening process:
+
+```{r eval=FALSE}
+opts_whitening = list(
+  order = 2,                      # AR order
+  global_ar_on_design = TRUE      # Apply global AR on design
+)
+```
+
+### Ridge Regression
+
+The `opts_ridge` list controls the ridge regression for final denoising:
+
+```{r eval=FALSE}
+opts_ridge = list(
+  anisotropic_ridge_enable = TRUE,  # Enable anisotropic ridge
+  lambda_perp_signal = 0.1,         # Lambda for signal components
+  lambda_noise_rpca = 1.0,          # Lambda for RPCA noise
+  lambda_noise_spectral = 1.0       # Lambda for spectral noise
+)
+```
+
+### Annihilation Mode
+
+The `opts_annihilation` list controls the Annihilation Mode, which integrates GLMdenoise-like functionality:
+
+```{r eval=FALSE}
+opts_annihilation = list(
+  annihilation_enable_mode = TRUE,               # Enable Annihilation Mode
+  annihilation_gdlite_k_max = 30,                # Maximum number of GLMdenoise PCs
+  annihilation_gdlite_r2_thresh_noise_pool = 0.05  # R² threshold for noise pool
+)
+```
+
+## Advanced Usage Examples
+
+### Conservative Denoising
+
+```{r eval=FALSE}
+conservative_options <- list(
+  max_passes = 2,
+  opts_rpca = list(k_global_target = 10, k_rpca_max = 20),
+  opts_ridge = list(lambda_perp_signal = 0.05, lambda_noise_rpca = 0.5)
+)
+```
+
+### Aggressive Denoising
+
+```{r eval=FALSE}
+aggressive_options <- list(
+  max_passes = 5,
+  min_des_gain_convergence = 0.001,
+  opts_rpca = list(k_global_target = 30, k_rpca_max = 100),
+  opts_ridge = list(lambda_perp_signal = 0.2, lambda_noise_rpca = 5.0)
+)
+```
+
+### Annihilation Mode Configuration
+
+```{r eval=FALSE}
+annihilation_options <- list(
+  opts_annihilation = list(
+    annihilation_enable_mode = TRUE,
+    annihilation_gdlite_k_max = 25,
+    annihilation_gdlite_r2_thresh_noise_pool = 0.05,
+    annihilation_gdlite_tsnr_thresh_noise_pool = 30
+  ),
+  
+  # Special ridge settings for Annihilation Mode
+  opts_ridge = list(
+    lambda_noise_gdlite = 1.0,      # Lambda for GLMdenoise PCs
+    lambda_noise_ndx_unique = 0.5   # Lambda for unique ND-X components
+  )
+)
+```
+
+## Troubleshooting
+
+### Common Issues
+
+- **Error: Parameter X is not valid**: Check the parameter name and make sure it's nested in the correct sub-list.
+- **Warning: Using default for Y**: The option wasn't found and a default was used. Check your option structure.
+
+### Finding Default Values
+
+All default values are documented in the `?ndx_user_options` help page. You can also inspect the code for specific functions to see how defaults are implemented.
+
+## Best Practices
+
+1. **Start with Defaults**: Run with minimal options first, then customize based on your needs.
+2. **Monitor Diagnostics**: Use the HTML diagnostics to see how changes affect performance.
+3. **Incremental Changes**: Change one set of options at a time to understand effects.
+4. **Document Your Settings**: Save your `user_options` along with your results for reproducibility.
+
+## References
+
+For additional information, refer to:
+
+- The function documentation (`?NDX_Process_Subject`)
+- The options reference (`?ndx_user_options`)
+- The ND-X methodology paper (citation to be added) 
