@@ -312,4 +312,21 @@ test_that("FIR basis generation in ndx_build_design_matrix handles edge cases", 
                                              spectral_sines = NULL, run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
   expect_false(any(startsWith(colnames(X_taskC_no_events), "task_")))
   expect_equal(ncol(X_taskC_no_events), 1) # Intercept
-}) 
+})
+
+test_that("drop_zero_variance option removes constant regressors", {
+  const_rpca <- matrix(1, nrow = total_timepoints_dm, ncol = 1)
+  X_drop <- ndx_build_design_matrix(
+    estimated_hrfs = estimated_hrfs_dm,
+    events = events_dm,
+    motion_params = motion_params_dm,
+    rpca_components = const_rpca,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE,
+    drop_zero_variance = TRUE
+  )
+  expect_false("rpca_comp_1" %in% colnames(X_drop))
+})

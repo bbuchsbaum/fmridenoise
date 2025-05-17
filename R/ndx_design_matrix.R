@@ -14,6 +14,7 @@
 #' @param TR Repetition time, in seconds.
 #' @param poly_degree Degree of Legendre polynomial baseline (per run).
 #' @param verbose Logical flag for verbose console output.
+#' @param drop_zero_variance Logical flag to drop near-zero variance regressors.
 #'
 #' @return Numeric matrix with one column per regressor (or `NULL` on failure).
 #' @importFrom fmrireg sampling_frame event_model design_matrix baseline_model
@@ -27,7 +28,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     run_idx,
                                     TR,
                                     poly_degree = NULL,
-                                    verbose = TRUE) {
+                                    verbose = TRUE,
+                                    drop_zero_variance = FALSE) {
 
   # 1. Basic validation ----------------------------------------------------
   info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
@@ -44,7 +46,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 
   # 5. Combine -------------------------------------------------------------
   regressor_list <- c(list(task = task_mat), nuisance_list_components, list(baseline = baseline_mat))
-  X_full <- .ndx_combine_regressors(regressor_list, info$total_tp, verbose)
+  X_full <- .ndx_combine_regressors(regressor_list, info$total_tp,
+                                    verbose, drop_zero_variance)
 
   if (verbose && !is.null(X_full)) {
     message(sprintf("Constructed X_full_design with %d timepoints and %d regressors.", 
@@ -130,26 +133,24 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     fir_colnames <- paste0(make.names(cond_name), "_FIR", 0:(num_fir-1))
     colnames(X_fir_basis_cond) <- fir_colnames
 
-    current_run_offset <- 0 
-    for (run_idx_val in 1:length(sf$blocklens)) {
+    current_run_offset <- 0
+    for (run_idx_val in seq_along(sf$blocklens)) {
       run_length_tps <- sf$blocklens[run_idx_val]
       run_start_tp_global <- current_run_offset + 1
       run_end_tp_global <- current_run_offset + run_length_tps
       run_events <- current_condition_events[current_condition_events$blockids == run_idx_val, ]
 
       if (nrow(run_events) > 0) {
-        for (ev_idx in 1:nrow(run_events)) {
-          event_onset_sec <- run_events$onsets[ev_idx]
-          event_onset_tr_global_0idx <- floor(event_onset_sec / TR) + (run_start_tp_global - 1)
-          for (tap_idx in 0:(num_fir - 1)) { 
-            target_timepoint_0idx <- event_onset_tr_global_0idx + tap_idx
-            target_timepoint_1idx <- target_timepoint_0idx + 1
-            if (target_timepoint_1idx >= run_start_tp_global && 
-                target_timepoint_1idx <= run_end_tp_global && 
-                target_timepoint_1idx <= total_timepoints) {
-              X_fir_basis_cond[target_timepoint_1idx, tap_idx + 1] <- 1
-            }
-          }
+        onset_tp_global <- floor(run_events$onsets / TR) + run_start_tp_global
+        idx_matrix <- outer(onset_tp_global, 0:(num_fir - 1), "+")
+        valid_mask <- idx_matrix >= run_start_tp_global &
+                      idx_matrix <= run_end_tp_global &
+                      idx_matrix <= total_timepoints
+        if (any(valid_mask)) {
+          row_idx <- idx_matrix[valid_mask]
+          col_idx <- matrix(rep(seq_len(num_fir), each = length(onset_tp_global)),
+                            nrow = length(onset_tp_global))[valid_mask]
+          X_fir_basis_cond[cbind(row_idx, col_idx)] <- 1
         }
       }
       current_run_offset <- current_run_offset + run_length_tps
@@ -182,6 +183,13 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                               verbose = TRUE) {
   if (verbose) message("  Generating nuisance regressors...") # Kept one high-level message
   nuis <- list()
+
+  if ((is.null(motion_params) || ncol(motion_params) == 0) &&
+      (is.null(rpca_components) || ncol(rpca_components) == 0) &&
+      (is.null(spectral_sines) || ncol(spectral_sines) == 0)) {
+    if (verbose) message("    No nuisance regressors provided.")
+    return(NULL)
+  }
 
   if (!is.null(motion_params) && ncol(motion_params) > 0) {
     nuis$motion <- as.matrix(motion_params)
@@ -278,7 +286,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 #' @keywords internal
 .ndx_combine_regressors <- function(reg_list,
                                    total_tp,
-                                   verbose = TRUE) {
+                                   verbose = TRUE,
+                                   drop_zero_variance = FALSE) {
   valid_components <- list()
   for (name in names(reg_list)) {
     comp <- reg_list[[name]]
@@ -320,12 +329,16 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 
   if (!is.null(X_combined) && ncol(X_combined) > 0) {
     col_vars <- apply(X_combined, 2, stats::var, na.rm = TRUE)
-    potential_zero_var_cols <- colnames(X_combined)[col_vars < (.Machine$double.eps * 100)] 
-    intercept_patterns = "^(poly0|intercept|run_intercept_)"
+    potential_zero_var_cols <- colnames(X_combined)[col_vars < (.Machine$double.eps * 100)]
+    intercept_patterns <- "^(poly0|intercept|run_intercept_)"
     zero_var_cols_to_warn <- potential_zero_var_cols[!grepl(intercept_patterns, potential_zero_var_cols, ignore.case = TRUE)]
     if (length(zero_var_cols_to_warn) > 0 && verbose) {
-      message(sprintf("  Warning: The following non-intercept columns in the final design matrix have near-zero variance: %s", 
+      message(sprintf("  Warning: The following non-intercept columns in the final design matrix have near-zero variance: %s",
                       paste(zero_var_cols_to_warn, collapse=", ")))
+    }
+    if (drop_zero_variance && length(zero_var_cols_to_warn) > 0) {
+      X_combined <- X_combined[, !(colnames(X_combined) %in% zero_var_cols_to_warn), drop = FALSE]
+      if (verbose) message(sprintf("  Dropped %d near-zero variance column(s).", length(zero_var_cols_to_warn)))
     }
   }
   return(X_combined)
