@@ -124,10 +124,11 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
     * PSD of residuals (Pass-0 vs. final ND-X pass).
     * Spike carpet plot from `S` matrix (if `S` handling is sufficiently mature).
     * Display key adaptive hyperparameter choices.
-[ ] 9. **NDX-19: [Certificate] Implement "ND-X Certified Clean" JSON Sidecar Generation**
-* Define the JSON structure.
-* Populate with initial fields: `ndx_version`, final `DES`, `num_passes_converged`, final adaptive hyperparameter values, final `rho_noise_projection`.
-* Write function to save this JSON file.
+[X] 9. **NDX-19: [Certificate] Implement "ND-X Certified Clean" JSON Sidecar Generation**
+* Define the JSON structure following the proposal's specification (`ndx_version`, key diagnostic scores, adaptive hyperparams, pass count).
+* Implement `ndx_generate_json_certificate(workflow_output, output_path)` that extracts the final pass diagnostics and writes them via `jsonlite::write_json`.
+* Stored fields include the final DES, `rho_noise_projection`, and adaptive values such as `k_rpca_global`, `num_spectral_sines`, and lambda settings.
+* Return the path to the created JSON file for downstream tools (e.g., CV-PWS) to read.
 [ ] 10. **NDX-20: [Testing] Iterative Workflow & Annihilation Mode Integration Tests**
 * Expand tests from Sprint 1 to cover the iterative workflow with 2-3 passes.
 * Test the Annihilation Mode path specifically: ensure `U_GD_PCs` are generated, orthogonalization occurs, and the ridge uses the correct projectors.
