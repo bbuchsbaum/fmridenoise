@@ -27,6 +27,8 @@
 #'   - `rpca_lambda_fixed` (numeric): Fixed lambda value if `rpca_lambda_auto` is FALSE.
 #'   - `rpca_merge_strategy` (character): Strategy for merging voxel-space components.
 #'     Options are "concat_svd" or "iterative". Default: "concat_svd".
+#'   - `rpca_spike_mad_thresh` (numeric): MAD multiplier for spike detection. Default: 3.0.
+#'   - `rpca_spike_percentile_thresh` (numeric): Percentile threshold if MAD is tiny. Default: 0.98.
 #' @return A list with elements:
 #'   - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
 #'   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
@@ -93,14 +95,16 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   }
 
   default_opts <- list(
-    k_per_run_target = k_global_target, 
-    rpca_term_delta = 1e-6, 
+    k_per_run_target = k_global_target,
+    rpca_term_delta = 1e-6,
     rpca_max_iter = 2000,
-    rpca_mu = NULL, 
+    rpca_mu = NULL,
     rpca_lambda_auto = TRUE,
     rpca_lambda_fixed = NULL,
     rpca_trace = FALSE,
-    rpca_merge_strategy = "concat_svd" # "concat_svd" or "iterative"
+    rpca_merge_strategy = "concat_svd", # "concat_svd" or "iterative"
+    rpca_spike_mad_thresh = 3.0,
+    rpca_spike_percentile_thresh = 0.98
   )
   current_opts <- utils::modifyList(default_opts, user_options)
   
@@ -134,8 +138,8 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   V_list <- list() # To store V_r (voxel-space components from each run)
   glitch_ratios_per_run <- numeric(length(Y_residuals_list))
   names(glitch_ratios_per_run) <- names(Y_residuals_list)
-  spike_mask_list <- vector("list", length(Y_residuals_list))
-  names(spike_mask_list) <- names(Y_residuals_list)
+  per_run_spike_TR_masks <- vector("list", length(Y_residuals_list))
+  names(per_run_spike_TR_masks) <- names(Y_residuals_list)
 
   message(sprintf("Starting per-run RPCA for %d runs...", length(Y_residuals_list)))
   for (r_idx in seq_along(Y_residuals_list)) {
@@ -283,14 +287,24 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
 
     # Spike TR mask for this run using median |S| across voxels
     if (!is.null(S_r_t) && length(S_r_t) > 0) {
-      if (sum(abs(S_r_t)) == 0) {
-        spike_mask_list[[run_name]] <- rep(FALSE, ncol(S_r_t))
+      if (sum(abs(S_r_t), na.rm = TRUE) < 1e-9) {
+        spike_TR_mask_run <- rep(FALSE, ncol(S_r_t))
       } else {
-        S_t_star <- matrixStats::colMedians(abs(S_r_t))
-        spike_mask_list[[run_name]] <- S_t_star > 0
+        s_t_star_run <- apply(abs(S_r_t), 2, stats::median, na.rm = TRUE)
+        mad_s_t_star <- stats::mad(s_t_star_run, constant = 1, na.rm = TRUE)
+        if (!is.finite(mad_s_t_star) || mad_s_t_star < 1e-9) {
+          thresh_val <- stats::quantile(s_t_star_run,
+                                        probs = current_opts$rpca_spike_percentile_thresh,
+                                        na.rm = TRUE)
+        } else {
+          thresh_val <- median(s_t_star_run, na.rm = TRUE) +
+            current_opts$rpca_spike_mad_thresh * mad_s_t_star
+        }
+        spike_TR_mask_run <- s_t_star_run > thresh_val
       }
+      per_run_spike_TR_masks[[run_name]] <- as.logical(spike_TR_mask_run)
     } else {
-      spike_mask_list[[run_name]] <- rep(FALSE, nrow(Er))
+      per_run_spike_TR_masks[[run_name]] <- rep(FALSE, nrow(Er))
     }
   } # End per-run RPCA loop
   
@@ -393,7 +407,7 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   message(sprintf("Mean Glitch Ratio across valid runs: %.3f", mean(glitch_ratios_per_run, na.rm=TRUE)))
   
   # Combine spike masks in original run order
-  spike_TR_mask <- unlist(spike_mask_list[paste0("run_", unique_runs)])
+  spike_TR_mask <- unlist(per_run_spike_TR_masks[paste0("run_", unique_runs)], use.names = FALSE)
   if (is.null(spike_TR_mask)) {
     spike_TR_mask <- rep(FALSE, nrow(Y_residuals_cat))
   } else {
