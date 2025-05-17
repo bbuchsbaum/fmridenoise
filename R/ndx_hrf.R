@@ -105,90 +105,156 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
   validated_inputs <- validate_hrf_inputs(Y_fmri, pass0_residuals, events, run_idx, TR, 
                                             spike_TR_mask, user_options)
   user_options <- validated_inputs$user_options
-  # n_timepoints <- validated_inputs$n_timepoints 
-  # spike_TR_mask in this scope is the validated one from validated_inputs
+  validated_spike_TR_mask <- validated_inputs$validated_spike_TR_mask
 
+  # Prepare data for good voxels and clustering
   response_data <- prepare_hrf_response_data(Y_fmri, pass0_residuals, run_idx, 
-                                             validated_inputs$validated_spike_TR_mask, 
+                                             validated_spike_TR_mask, 
                                              user_options)
-  
   if (is.null(response_data)) {
+    warning("HRF estimation cannot proceed: prepare_hrf_response_data returned NULL (e.g. no good voxels or valid TRs).")
     return(NULL) 
   }
-  
-  ybar_clean <- response_data$ybar_clean
-  block_ids_for_cv <- response_data$block_ids_for_cv
+  ybar_global_clean <- response_data$ybar_clean # Global ybar for fallback or C=1
+  block_ids_for_cv_global <- response_data$block_ids_for_cv
   valid_TRs_for_hrf_estimation_mask <- response_data$valid_TRs_for_hrf_estimation_mask
+  good_voxels_indices_in_Y_fmri <- response_data$good_voxels_indices # Assuming prepare_hrf_response_data returns this
+  Y_good_voxels_all_trs <- Y_fmri[, good_voxels_indices_in_Y_fmri, drop = FALSE]
+
+  # Perform clustering if method is not "none" and num_clusters > 1
+  cluster_info <- NULL
+  if (user_options$hrf_cluster_method == "pam" && user_options$num_hrf_clusters > 1 && !is.null(Y_good_voxels_all_trs) && ncol(Y_good_voxels_all_trs) > 0) {
+    Y_good_voxels_for_clustering <- Y_good_voxels_all_trs[valid_TRs_for_hrf_estimation_mask, , drop = FALSE]
+    if (nrow(Y_good_voxels_for_clustering) > 0) {
+      cluster_info <- .perform_hrf_clustering(Y_good_voxels_for_clustering, 
+                                            user_options$num_hrf_clusters, 
+                                            user_options, verbose = (user_options$verbose_hrf %||% FALSE))
+    } else {
+        if(user_options$verbose_hrf %||% FALSE) message("No valid TRs in Y_good_voxels_for_clustering, skipping clustering.")
+    }
+  }
   
-  results_list_collector <- list() # Changed name to avoid clash with internal var name
+  if (is.null(cluster_info) || cluster_info$num_clusters_eff == 1) {
+    # Treat as a single cluster (global HRF estimation)
+    num_effective_clusters <- 1
+    voxel_to_cluster_map <- rep(1L, ncol(Y_good_voxels_all_trs %||% matrix(ncol=0))) # Map good voxels to cluster 1
+  } else {
+    num_effective_clusters <- cluster_info$num_clusters_eff
+    voxel_to_cluster_map <- cluster_info$voxel_cluster_ids # Maps good_voxels_indices to cluster_id
+  }
+
+  results_list_collector <- list()
   conditions <- unique(as.character(events$condition))
   
   unique_runs_overall <- unique(run_idx)
   run_lengths_overall <- as.numeric(table(factor(run_idx, levels = unique_runs_overall)))
   sf_overall <- fmrireg::sampling_frame(blocklens = run_lengths_overall, TR = TR)
-  message(sprintf("[ndx_estimate_initial_hrfs] sf_overall$total_samples: %s (class: %s)", 
-                  as.character(sf_overall$total_samples), class(sf_overall$total_samples)))
-  if (is.null(sf_overall$total_samples)) {message("sf_overall$total_samples IS NULL - THIS IS THE PROBLEM"); print(sf_overall)}
-  
-  for (cond_name_iter in conditions) { # Renamed loop variable
-    message(paste("Processing HRF for condition:", cond_name_iter))
+  # message(sprintf("[ndx_estimate_initial_hrfs] sf_overall$total_samples: %s (class: %s)", 
+  #                 as.character(sum(sf_overall$blocklens)), class(sum(sf_overall$blocklens))))
+  # if (is.null(sum(sf_overall$blocklens))) {message("sf_overall$total_samples IS NULL - THIS IS THE PROBLEM"); print(sf_overall)}
+
+  for (cond_name_iter in conditions) {
+    if (user_options$verbose_hrf %||% FALSE) message(paste("  Processing HRF for condition:", cond_name_iter))
     events_for_this_condition <- events[events$condition == cond_name_iter, , drop = FALSE]
-    
-    # Call the new per-condition estimation function
-    condition_hrf_result <- estimate_hrf_for_condition(
-      condition_name = cond_name_iter,
-      events_for_condition = events_for_this_condition,
-      ybar_clean = ybar_clean,
-      block_ids_for_cv = block_ids_for_cv,
-      overall_sampling_frame = sf_overall,
-      valid_TRs_mask = valid_TRs_for_hrf_estimation_mask, # pass the mask directly
-      TR = TR,
-      user_options = user_options
-    )
-    results_list_collector[[cond_name_iter]] <- condition_hrf_result
+
+    for (cl_idx in 1:num_effective_clusters) {
+      ybar_for_this_hrf <- NULL
+      block_ids_for_this_hrf_cv <- NULL
+
+      if (num_effective_clusters == 1) {
+        if (user_options$verbose_hrf %||% FALSE) message(sprintf("    Condition %s: Using global ybar for estimation.", cond_name_iter))
+        ybar_for_this_hrf <- ybar_global_clean
+        block_ids_for_this_hrf_cv <- block_ids_for_cv_global
+      } else {
+        vox_in_this_cluster_mask <- (voxel_to_cluster_map == cl_idx)
+        if (sum(vox_in_this_cluster_mask) == 0) {
+          if (user_options$verbose_hrf %||% FALSE) message(sprintf("    Condition %s, Cluster %d: No voxels. Skipping.", cond_name_iter, cl_idx))
+          next
+        }
+        Y_cluster_data <- Y_good_voxels_all_trs[, vox_in_this_cluster_mask, drop = FALSE]
+        ybar_cluster_all_trs <- matrixStats::rowMedians(Y_cluster_data, na.rm = TRUE)
+        ybar_for_this_hrf <- ybar_cluster_all_trs[valid_TRs_for_hrf_estimation_mask]
+        block_ids_for_this_hrf_cv <- run_idx[valid_TRs_for_hrf_estimation_mask]
+        if (user_options$verbose_hrf %||% FALSE) message(sprintf("    Condition %s, Cluster %d: Using ybar from %d voxels.", 
+                                                               cond_name_iter, cl_idx, sum(vox_in_this_cluster_mask)))
+      }
+
+      if (length(ybar_for_this_hrf) == 0) {
+          if (user_options$verbose_hrf %||% FALSE) message("      ybar_for_this_hrf is empty. Skipping this HRF estimation.")
+          next
+      }
+
+      condition_cluster_hrf_result <- estimate_hrf_for_condition(
+        condition_name = cond_name_iter,
+        events_for_condition = events_for_this_condition,
+        ybar_clean = ybar_for_this_hrf,
+        block_ids_for_cv = block_ids_for_this_hrf_cv,
+        overall_sampling_frame = sf_overall,
+        valid_TRs_mask = valid_TRs_for_hrf_estimation_mask, 
+        TR = TR,
+        user_options = user_options # Pass full user_options (contains opts_hrf implicitly)
+      )
+      
+      # Store result with cluster_id if multiple clusters, otherwise cluster_id = 1
+      # The estimate_hrf_for_condition already returns a list with $condition, $hrf_estimate etc.
+      # We need to add cluster_id to it before collecting.
+      if (!is.null(condition_cluster_hrf_result)) {
+          condition_cluster_hrf_result$cluster_id <- cl_idx
+          results_list_collector[[paste(cond_name_iter, cl_idx, sep="_")]] <- condition_cluster_hrf_result
+      }
+    }
   }
   
-  if (length(results_list_collector) == 0) return(NULL) # Should be caught if conditions is empty
+  if (length(results_list_collector) == 0) {
+    warning("HRF estimation: No results collected for any condition/cluster.")
+    return(NULL)
+  }
   
-  # Convert list of lists to a tibble
-  # Filter out any top-level NULLs if a condition somehow failed to even produce a list structure (unlikely with current setup)
   valid_results <- Filter(Negate(is.null), results_list_collector)
-  if(length(valid_results) == 0 && length(conditions) > 0) {
-      warning("No valid HRF results were generated for any condition.")
-      return(NULL)
-  }
-  if(length(valid_results) == 0 && length(conditions) == 0) {
-      message("No conditions found in event data to estimate HRFs for.")
+  if(length(valid_results) == 0) {
+      warning("No valid HRF results were generated for any condition/cluster.")
       return(NULL)
   }
 
-  # Reconstruct based on the structure returned by estimate_hrf_for_condition
-  conditions_out <- sapply(valid_results, function(x) x$condition)
+  # Modify output tibble structure for cluster information
+  conditions_out   <- sapply(valid_results, function(x) x$condition)
+  cluster_ids_out  <- sapply(valid_results, function(x) x$cluster_id)
   hrf_estimates_out <- lapply(valid_results, function(x) x$hrf_estimate)
-  taps_out <- lapply(valid_results, function(x) x$taps)
+  taps_out         <- lapply(valid_results, function(x) x$taps)
   
   output_tbl <- tibble::tibble(
-      condition = conditions_out,
+      condition    = conditions_out,
+      cluster_id   = cluster_ids_out, 
       hrf_estimate = hrf_estimates_out,
-      taps = taps_out
+      taps         = taps_out
   )
   
   if (user_options$return_full_model) {
-      glmgen_fits_out <- lapply(valid_results, function(x) x$glmgen_fit)
-      # Ensure this column is added only if there are valid results
+      glmgen_fits_out <- lapply(valid_results, function(x) x$glmgen_fit %||% list(NULL)) # Ensure list if fit is NULL
       if (nrow(output_tbl) > 0) {
         output_tbl$glmgen_fit <- glmgen_fits_out
-      } else if (length(glmgen_fits_out) > 0) {
-        # This case (no rows in output_tbl but fits exist) should not happen if logic is correct
-        # but as a fallback, create a tibble for fits if conditions_out was empty but fits were somehow produced
-        output_tbl <- tibble::tibble(condition=NA_character_, hrf_estimate=list(NULL), taps=list(NULL), glmgen_fit = glmgen_fits_out)[-1,]
-        warning("HRF fitting produced glmgen_fits but no primary HRF data; check for inconsistencies.")
-      }
+      } 
   }
   
   if (nrow(output_tbl) == 0 && length(conditions) > 0) {
-      warning("HRF estimation resulted in an empty table despite conditions being present. Check warnings for individual conditions.")
+      warning("HRF estimation resulted in an empty table despite conditions being present. Check warnings.")
       return(NULL)
+  }
+
+  # Add attribute for how many clusters were effectively used/estimated
+  attr(output_tbl, "num_effective_clusters") <- num_effective_clusters
+  if (!is.null(cluster_info) && !is.null(cluster_info$medoid_indices)) {
+      # Map medoid_indices (which are relative to good_voxels_indices) back to original Y_fmri voxel indices
+      attr(output_tbl, "medoid_voxel_original_indices") <- good_voxels_indices_in_Y_fmri[cluster_info$medoid_indices]
+  }
+  if (!is.null(voxel_to_cluster_map)) {
+      # This map is for good_voxels_indices_in_Y_fmri -> cluster_id
+      # To make it map original voxel_id -> cluster_id:
+      full_voxel_to_cluster_map <- rep(NA_integer_, ncol(Y_fmri))
+      if(length(good_voxels_indices_in_Y_fmri) == length(voxel_to_cluster_map)) {
+          full_voxel_to_cluster_map[good_voxels_indices_in_Y_fmri] <- voxel_to_cluster_map
+      }
+      attr(output_tbl, "voxel_to_cluster_assignment_full") <- full_voxel_to_cluster_map
   }
 
   return(output_tbl)
@@ -439,9 +505,22 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
     lambda1_grid = 10^seq(-2, 1, length.out = 5),
     lambda2_grid = 10^seq(-3, 0, length.out = 5),
     hrf_min_good_voxels = 50L,
-    return_full_model = FALSE
+    return_full_model = FALSE,
+    hrf_cluster_method = "none", 
+    num_hrf_clusters = 1L,
+    hrf_min_events_for_fir = 6L, 
+    hrf_low_event_threshold = 12L,
+    hrf_target_event_count_for_lambda_scaling = 20L,
+    hrf_use_canonical_fallback_for_ultra_sparse = FALSE
   )
   user_options <- utils::modifyList(default_opts, user_options)
+
+  # Check for presence of all expected options now includes new ones
+  expected_opts_names <- names(default_opts)
+  if(!all(expected_opts_names %in% names(user_options))) {
+    stop(paste("Missing one or more user_options for HRF estimation (after merging defaults):", 
+               paste(expected_opts_names[!expected_opts_names %in% names(user_options)], collapse=", ")))
+  }
 
   if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) stop("Y_fmri must be a numeric matrix.")
   n_timepoints <- nrow(Y_fmri)
@@ -477,20 +556,53 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
       stop("spike_TR_mask must be a logical vector with length matching n_timepoints in Y_fmri.")
   }
   
-  # Validate specific user_options types and values
-  if(!is.numeric(user_options$hrf_fir_taps) || user_options$hrf_fir_taps <=0) stop("hrf_fir_taps must be a positive integer.")
+  # Validate specific user_options types and values (add new ones)
+  if(!is.numeric(user_options$hrf_fir_taps) || user_options$hrf_fir_taps <=0 || round(user_options$hrf_fir_taps) != user_options$hrf_fir_taps) stop("hrf_fir_taps must be a positive integer.")
+  user_options$hrf_fir_taps <- as.integer(user_options$hrf_fir_taps)
+
   if(!is.numeric(user_options$hrf_fir_span_seconds) || user_options$hrf_fir_span_seconds <=0) stop("hrf_fir_span_seconds must be a positive number.")
+  
   thr <- user_options$good_voxel_R2_threshold
   if(!is.numeric(thr) || length(thr) != 1 || is.na(thr) ||
-     (is.finite(thr) && (thr < 0 || thr > 1)) ||
+     (is.finite(thr) && (thr < -1 || thr > 1)) || # Allow -Inf but not other negative numbers for R2 unless it means something
      (is.infinite(thr) && thr > 0)) {
-    stop("good_voxel_R2_threshold must be -Inf or a finite number between 0 and 1.")
+    stop("good_voxel_R2_threshold must be -Inf or a finite number between 0 and 1 (or slightly <0 if that has meaning).")
   }
-  if(!is.numeric(user_options$cv_folds) || user_options$cv_folds <=0) stop("cv_folds must be a positive integer.")
+  
+  if(!is.numeric(user_options$cv_folds) || user_options$cv_folds <=0 || round(user_options$cv_folds) != user_options$cv_folds) stop("cv_folds must be a positive integer.")
+  user_options$cv_folds <- as.integer(user_options$cv_folds)
+
   if(!is.numeric(user_options$lambda1_grid) || length(user_options$lambda1_grid)==0) stop("lambda1_grid must be a non-empty numeric vector.")
   if(!is.numeric(user_options$lambda2_grid) || length(user_options$lambda2_grid)==0) stop("lambda2_grid must be a non-empty numeric vector.")
-  if(!is.numeric(user_options$hrf_min_good_voxels) || user_options$hrf_min_good_voxels <0) stop("hrf_min_good_voxels must be a non-negative integer.")
+  
+  if(!is.numeric(user_options$hrf_min_good_voxels) || user_options$hrf_min_good_voxels <0 || round(user_options$hrf_min_good_voxels) != user_options$hrf_min_good_voxels) stop("hrf_min_good_voxels must be a non-negative integer.")
+  user_options$hrf_min_good_voxels <- as.integer(user_options$hrf_min_good_voxels)
+  
   if(!is.logical(user_options$return_full_model) || length(user_options$return_full_model)!=1) stop("return_full_model must be a single logical value.")
+
+  if(!is.character(user_options$hrf_cluster_method) || length(user_options$hrf_cluster_method)!=1 || !user_options$hrf_cluster_method %in% c("none", "pam")) stop("hrf_cluster_method must be 'none' or 'pam'.")
+  
+  if(!is.numeric(user_options$num_hrf_clusters) || user_options$num_hrf_clusters < 1 || round(user_options$num_hrf_clusters) != user_options$num_hrf_clusters) stop("num_hrf_clusters must be a positive integer >= 1.")
+  user_options$num_hrf_clusters <- as.integer(user_options$num_hrf_clusters)
+  if (user_options$hrf_cluster_method == "none" && user_options$num_hrf_clusters != 1) {
+      warning("hrf_cluster_method is 'none' but num_hrf_clusters is not 1. Setting num_hrf_clusters to 1.")
+      user_options$num_hrf_clusters <- 1L
+  }
+
+  if(!is.numeric(user_options$hrf_min_events_for_fir) || user_options$hrf_min_events_for_fir < 0 || round(user_options$hrf_min_events_for_fir) != user_options$hrf_min_events_for_fir) stop("hrf_min_events_for_fir must be a non-negative integer.")
+  user_options$hrf_min_events_for_fir <- as.integer(user_options$hrf_min_events_for_fir)
+
+  if(!is.numeric(user_options$hrf_low_event_threshold) || user_options$hrf_low_event_threshold < 0 || round(user_options$hrf_low_event_threshold) != user_options$hrf_low_event_threshold) stop("hrf_low_event_threshold must be a non-negative integer.")
+  user_options$hrf_low_event_threshold <- as.integer(user_options$hrf_low_event_threshold)
+  if(user_options$hrf_low_event_threshold < user_options$hrf_min_events_for_fir) {
+      warning("hrf_low_event_threshold should not be less than hrf_min_events_for_fir. Adjusting hrf_low_event_threshold.")
+      user_options$hrf_low_event_threshold <- user_options$hrf_min_events_for_fir
+  }
+
+  if(!is.numeric(user_options$hrf_target_event_count_for_lambda_scaling) || user_options$hrf_target_event_count_for_lambda_scaling <=0 || round(user_options$hrf_target_event_count_for_lambda_scaling) != user_options$hrf_target_event_count_for_lambda_scaling) stop("hrf_target_event_count_for_lambda_scaling must be a positive integer.")
+  user_options$hrf_target_event_count_for_lambda_scaling <- as.integer(user_options$hrf_target_event_count_for_lambda_scaling)
+  
+  if(!is.logical(user_options$hrf_use_canonical_fallback_for_ultra_sparse) || length(user_options$hrf_use_canonical_fallback_for_ultra_sparse)!=1) stop("hrf_use_canonical_fallback_for_ultra_sparse must be a single logical value.")
 
   return(list(user_options = user_options, 
               n_timepoints = n_timepoints, 
@@ -538,18 +650,16 @@ prepare_hrf_response_data <- function(Y_fmri, pass0_residuals, run_idx, validate
       return(NULL)
   }
   
-  # Calculate rowMedians on the subset of good voxels, for all original timepoints
   ybar_all_trs <- matrixStats::rowMedians(Y_good_voxels, na.rm = TRUE) 
-  # Then select only the valid (non-spike) TRs for ybar_clean
   ybar_clean <- ybar_all_trs[valid_TRs_for_hrf_estimation_mask]
-  # Corresponding block IDs for these valid TRs
   block_ids_for_cv <- run_idx[valid_TRs_for_hrf_estimation_mask]
   
   return(list(
     ybar_clean = ybar_clean,
     block_ids_for_cv = block_ids_for_cv,
     valid_TRs_for_hrf_estimation_mask = valid_TRs_for_hrf_estimation_mask,
-    n_good_voxels = n_good_voxels
+    n_good_voxels = n_good_voxels,
+    good_voxels_indices = good_voxels_idx
   ))
 }
 
@@ -578,20 +688,57 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
                                        overall_sampling_frame, valid_TRs_mask, TR,
                                        user_options) {
   
-  current_result <- list(condition = condition_name, hrf_estimate = NULL, taps = NULL)
-  if (user_options$return_full_model) current_result$glmgen_fit <- NULL
+  opts_hrf <- user_options # If user_options is already opts_hrf, then this is fine.
+                          # If user_options is the global one, then opts_hrf <- user_options$opts_hrf
+                          # Assuming it's already the HRF-specific sub-list from the caller.
+
+  current_result <- list(condition = condition_name, hrf_estimate = NULL, taps = NULL, glmgen_fit = NULL)
+  # if (opts_hrf$return_full_model) current_result$glmgen_fit <- NULL # Already init with NULL
 
   if (nrow(events_for_condition) == 0) {
-      warning(paste("No events found for condition (passed to estimate_hrf_for_condition):", condition_name)) # Should be caught earlier
+      # This warning might be redundant if ndx_estimate_initial_hrfs already filters conditions with no events.
+      # However, events_for_condition here is specific to current cluster's ybar context for valid TRs.
+      warning(paste("No events found for condition ", condition_name, " to estimate HRF.")) 
       return(current_result)
   }
   
+  # Calculate n_events_q for the current context (valid TRs for ybar_clean)
+  # This needs the full events table and the valid_TRs_mask to count events whose time window falls into valid TRs.
+  # For simplicity now, we use nrow(events_for_condition) as a proxy, assuming all these events contribute.
+  # A more precise n_events_q would consider event durations and overlap with valid_TRs_mask.
+  n_events_q <- nrow(events_for_condition) 
+  lambda_scale_factor <- 1.0
+  effective_hrf_fir_taps <- opts_hrf$hrf_fir_taps
+
+  if (n_events_q < (opts_hrf$hrf_min_events_for_fir %||% 6L)) {
+    if (opts_hrf$hrf_use_canonical_fallback_for_ultra_sparse %||% FALSE) {
+      warning(sprintf("Condition '%s' has only %d events. Using canonical HRF (not yet implemented, returning zeros).", condition_name, n_events_q))
+      # Placeholder: return a zero HRF or a pre-defined canonical scaled by some basic fit
+      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps)
+      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
+      return(current_result)
+    } else {
+      warning(sprintf("Condition '%s' has only %d events (min_events_for_fir=%d). Returning zero/damped FIR.", 
+                      condition_name, n_events_q, (opts_hrf$hrf_min_events_for_fir %||% 6L)))
+      current_result$hrf_estimate <- rep(0, opts_hrf$hrf_fir_taps) # Zero HRF
+      current_result$taps <- seq_len(opts_hrf$hrf_fir_taps)
+      return(current_result)
+    }
+  } else if (n_events_q < (opts_hrf$hrf_low_event_threshold %||% 12L)) {
+    target_events <- (opts_hrf$hrf_target_event_count_for_lambda_scaling %||% 20L)
+    if (n_events_q > 0) { # Avoid division by zero if n_events_q is somehow zero here despite previous check
+        lambda_scale_factor <- sqrt(target_events / n_events_q)
+    }
+    if (opts_hrf$verbose_hrf %||% FALSE) message(sprintf("  Condition '%s' has %d events. Applying lambda scaling factor: %.2f", 
+                                 condition_name, n_events_q, lambda_scale_factor))
+  }
+
   X_fir_cond_all_trs <- tryCatch({
        get_fir_design_matrix_for_condition(
           condition_name = condition_name,
           events_df = events_for_condition, 
           sampling_frame = overall_sampling_frame, 
-          fir_taps = user_options$hrf_fir_taps,
+          fir_taps = effective_hrf_fir_taps, # Use effective_hrf_fir_taps
           TR = TR 
       )
   }, error = function(e) {
@@ -600,41 +747,49 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   })
 
   if (is.null(X_fir_cond_all_trs) || ncol(X_fir_cond_all_trs) == 0) {
-    warning(paste("FIR design matrix for condition", condition_name, "is empty or NULL in estimate_hrf_for_condition."))
+    warning(paste("FIR design matrix for condition", condition_name, "is empty or NULL."))
     return(current_result)
   }
   
-  # Subset the design matrix to include only non-spike TRs (valid for estimation)
   X_fir_cond_clean <- X_fir_cond_all_trs[valid_TRs_mask, , drop = FALSE]
   
   if (nrow(X_fir_cond_clean) != length(ybar_clean)){
-      stop(sprintf("Critical internal error (estimate_hrf_for_condition): Mismatch in length of ybar_clean (%d) and rows of X_fir_cond_clean (%d) for condition: %s",
+      stop(sprintf("Critical internal error: Mismatch in length of ybar_clean (%d) and rows of X_fir_cond_clean (%d) for condition: %s",
                  length(ybar_clean), nrow(X_fir_cond_clean), condition_name))
   }
   
   if (sum(abs(X_fir_cond_clean)) < 1e-6 ) { 
-      warning(sprintf("No effective stimulus events for condition '%s' fall within non-spike TRs for FIR estimation (in estimate_hrf_for_condition).", condition_name))
+      warning(sprintf("No effective stimulus events for condition '%s' fall within non-spike TRs for FIR estimation.", condition_name))
       return(current_result)
   }
 
-  min_trs_needed <- max(user_options$hrf_fir_taps * 2, user_options$cv_folds + 1) 
+  min_trs_needed <- max(effective_hrf_fir_taps * 2, (opts_hrf$cv_folds %||% 2L) + 1) 
   if (nrow(X_fir_cond_clean) < min_trs_needed) { 
-      warning(sprintf("Not enough valid TRs (%d, need ~%d) to estimate FIR for condition: %s (in estimate_hrf_for_condition).", 
+      warning(sprintf("Not enough valid TRs (%d, need ~%d) for FIR for condition: %s.", 
                       nrow(X_fir_cond_clean), min_trs_needed, condition_name))
       return(current_result)
   }
   
+  # Apply scaling to lambda grids for CV if lambda_scale_factor > 1
+  # Note: genlasso takes lambda (for L1 on diffs) and gamma (for L2 on coeffs)
+  # The feedback suggested scaling both lambda1 and lambda2 (gamma).
+  cv_lambda1_grid <- (opts_hrf$lambda1_grid %||% 1) * lambda_scale_factor
+  cv_lambda2_grid <- (opts_hrf$lambda2_grid %||% 0.1) * lambda_scale_factor # Scale gamma as well
+
   cv_results <- cv_fusedlasso(y = ybar_clean, X = X_fir_cond_clean,
-                                lambda_grid = user_options$lambda1_grid, 
-                                gamma_grid = user_options$lambda2_grid,  
-                                k_folds = user_options$cv_folds,
+                                lambda_grid = cv_lambda1_grid, 
+                                gamma_grid = cv_lambda2_grid,  
+                                k_folds = (opts_hrf$cv_folds %||% 2L),
                                 block_ids = block_ids_for_cv)
   
-  best_lambda1 <- cv_results$best_lambda
-  best_lambda2 <- cv_results$best_gamma
+  # Use the best lambdas directly as returned by cv_fusedlasso (which were sought on potentially scaled grids)
+  best_lambda1 <- cv_results$best_lambda 
+  best_lambda2 <- cv_results$best_gamma  
   
-  message(sprintf("  Condition '%s': Best lambda1 (L1 diff): %.4f, Best lambda2 (L2 coeff): %.4f", 
-                  condition_name, best_lambda1, best_lambda2))
+  if (opts_hrf$verbose_hrf %||% FALSE) {
+    message(sprintf("  Condition '%s': Best lambda1 (L1 diff): %.4f, Best lambda2 (L2 coeff): %.4f (from scaled grids if applicable, scale factor: %.2f)", 
+                  condition_name, best_lambda1, best_lambda2, lambda_scale_factor))
+  }
   
   X_mat <- X_fir_cond_clean
   p_coeffs_final <- ncol(X_mat)
@@ -642,7 +797,8 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   if (p_coeffs_final > 1) {
     D_1d_final <- diff(diag(p_coeffs_final), differences = 1)
   } else if (p_coeffs_final == 1) {
-    D_1d_final <- diff(diag(1), differences = 1)
+    # For genlasso, if D is NULL or not matrix, it implies no fusion. For single coeff, this is fine.
+    D_1d_final <- matrix(0, nrow=0, ncol=1) # genlasso needs D to be matrix, even if 0-row for single coeff
   }
   
   final_fit_path <- tryCatch({
@@ -654,7 +810,7 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   })
   
   if (is.null(final_fit_path) || !inherits(final_fit_path, "genlasso")) {
-    warning(sprintf("Final genlasso::fusedlasso fit for condition '%s' is NULL or not a genlasso object. Check warnings.", condition_name))
+    warning(sprintf("Final genlasso::fusedlasso fit for condition '%s' is NULL or not a genlasso object.", condition_name))
     return(current_result)
   }
   
@@ -667,22 +823,66 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   })
   
   if (is.null(fir_coeffs)) {
-    return(current_result) # Return NULL hrf_estimate as fir_coeffs extraction failed
+    return(current_result) 
   }
   
-  if (length(fir_coeffs) != user_options$hrf_fir_taps) {
-    warning(sprintf("Coefficient length mismatch for condition %s. Expected: %d, Got: %d. Padding/truncating.",
-                    condition_name, user_options$hrf_fir_taps, length(fir_coeffs)))
-    temp_coeffs <- rep(0, user_options$hrf_fir_taps)
-    len_to_copy <- min(length(fir_coeffs), user_options$hrf_fir_taps)
+  # Ensure fir_coeffs length matches effective_hrf_fir_taps
+  if (length(fir_coeffs) != effective_hrf_fir_taps) {
+    if (opts_hrf$verbose_hrf %||% FALSE) {
+        message(sprintf("    Condition %s: Coeff length %d from fusedlasso, expected %d. Padding/truncating.",
+                        condition_name, length(fir_coeffs), effective_hrf_fir_taps)) 
+    }
+    temp_coeffs <- rep(0, effective_hrf_fir_taps)
+    len_to_copy <- min(length(fir_coeffs), effective_hrf_fir_taps)
     if (len_to_copy > 0) temp_coeffs[1:len_to_copy] <- fir_coeffs[1:len_to_copy]
     fir_coeffs <- temp_coeffs
   }
   
   current_result$hrf_estimate <- project_cone_heuristic(fir_coeffs)
-  current_result$taps <- seq_len(user_options$hrf_fir_taps)
-  if (user_options$return_full_model) {
+  current_result$taps <- seq_len(effective_hrf_fir_taps)
+  if (opts_hrf$return_full_model) {
       current_result$glmgen_fit <- final_fit_path
   }
   return(current_result)
+}
+
+#' Perform K-Medoids Clustering on Voxel Time Courses
+#' @keywords internal
+.perform_hrf_clustering <- function(Y_for_clustering, num_clusters, user_options, verbose) {
+  # Y_for_clustering is timepoints x good_voxels_for_clustering
+  # We cluster voxels, so pam needs voxels x timepoints, or dist on voxels
+  if (verbose) message(sprintf("  Performing K-Medoids clustering for %d clusters on %d voxels.", num_clusters, ncol(Y_for_clustering)))
+  
+  if (num_clusters == 1 || ncol(Y_for_clustering) <= num_clusters || ncol(Y_for_clustering) < (user_options$hrf_min_good_voxels %||% 10) ) {
+    if (verbose && num_clusters > 1) message("    Number of good voxels too small for requested clusters, or num_clusters=1. Assigning all to cluster 1.")
+    return(list(voxel_cluster_ids = rep(1L, ncol(Y_for_clustering)), 
+                num_clusters_eff = 1L, 
+                medoid_indices = if(ncol(Y_for_clustering)>0) 1L else integer(0) )) # Default to first voxel as medoid if any
+  }
+  
+  # cluster::pam expects samples in rows, features in columns. 
+  # To cluster voxels (features here), we can transpose Y_for_clustering.
+  # Or, supply a distance matrix. Transposing is simpler if data fits memory.
+  # Consider if scaling/normalizing voxels before clustering is needed (e.g. z-score each voxel's timecourse)
+  pam_fit <- NULL
+  tryCatch({
+    # Note: pam can be slow for large N (voxels) and large P (timepoints per voxel)
+    # For very large number of voxels, might need to subsample or use clara.
+    # Data for pam should be n_observations (voxels) x n_variables (timepoints)
+    pam_fit <- cluster::pam(t(Y_for_clustering), k = num_clusters, diss = FALSE, metric="euclidean", stand = FALSE)
+  }, error = function(e) {
+    warning(sprintf("K-Medoids clustering (pam) failed: %s. Assigning all to cluster 1.", e$message))
+    pam_fit <<- NULL # Ensure it's NULL in outer scope on error
+  })
+  
+  if (is.null(pam_fit)) {
+    return(list(voxel_cluster_ids = rep(1L, ncol(Y_for_clustering)), 
+                num_clusters_eff = 1L, 
+                medoid_indices = if(ncol(Y_for_clustering)>0) 1L else integer(0) ))
+  }
+  
+  return(list(voxel_cluster_ids = pam_fit$clustering, 
+              num_clusters_eff = length(unique(pam_fit$clustering)), 
+              medoid_indices = pam_fit$id.med # Indices of medoids *within the input to pam* (i.e., among good_voxels_idx)
+              ))
 } 

@@ -17,6 +17,10 @@
 #'   Defaults to 5.
 #' @param nw Numeric, the time-bandwidth product for `multitaper::spec.mtm`.
 #'   Defaults to 3.
+#' @param selection_criterion Character string, either "BIC" or "AIC". Default "BIC".
+#' @param selection_delta_threshold Numeric, minimum decrease in the chosen information
+#'   criterion required to retain a candidate pair. Default 2.
+#' @param verbose Logical, whether to print verbose diagnostic messages.
 #'
 #' @return A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
 #'   rows. Each pair of columns represents sine and cosine regressors for an
@@ -52,7 +56,10 @@
 ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
                                n_sine_candidates = 6,
                                nyquist_guard_factor = 0.9,
-                               k_tapers = 5, nw = 3) {
+                               k_tapers = 5, nw = 3,
+                               selection_criterion = "BIC",
+                               selection_delta_threshold = 2,
+                               verbose = FALSE) {
 
   if (!is.numeric(mean_residual_for_spectrum) || length(mean_residual_for_spectrum) == 0) {
     warning("mean_residual_for_spectrum must be a non-empty numeric vector.")
@@ -63,15 +70,40 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
     return(NULL)
   }
 
-  # Adjust k_tapers based on nw and series length
-  # Ensure k_tapers is at least 1 and respects multitaper constraints.
-  # length(mean_residual_for_spectrum) - 1 is to ensure k_tapers is strictly less than N for some spec.mtm internals or typical usage.
-  # 2*nw - 1 is a constraint from the multitaper theory.
-  k_tapers <- min(k_tapers, 2 * nw - 1, length(mean_residual_for_spectrum) - 1)
+  # De-mean the series (Feedback 2.1)
+  mean_residual_for_spectrum <- base::scale(mean_residual_for_spectrum, center = TRUE, scale = FALSE)[,1]
+
+  # Adjust nw based on series length first (Feedback 2.3)
+  original_nw <- nw
+  nw <- min(nw, floor((length(mean_residual_for_spectrum)-1)/2))
+  if (nw < original_nw && verbose) {
+    message(sprintf("  ndx_spectral_sines: nw was reduced from %s to %s to be compatible with series length %d.", 
+                    original_nw, nw, length(mean_residual_for_spectrum)))
+  }
+  if (nw <= 0) { 
+      warning(sprintf("nw became %.2f after adjustment. Must be > 0. Aborting spectral step.", nw))
+      # Consistent return type for failure after initial checks
+      res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
+      attr(res_empty, "freq_hz") <- numeric(0)
+      attr(res_empty, "freq_rad_s") <- numeric(0)
+      return(res_empty)
+  }
+
+  # Adjust k_tapers (Feedback 2.2 for as.integer)
+  original_k_tapers <- k_tapers
+  k_tapers <- as.integer(min(k_tapers, 2 * nw - 1, length(mean_residual_for_spectrum) - 1))
+  if (k_tapers < original_k_tapers && verbose) {
+      message(sprintf("  ndx_spectral_sines: k_tapers reduced from %d to %d based on nw (%.2f) and series length (%d).",
+                      original_k_tapers, k_tapers, nw, length(mean_residual_for_spectrum)))
+  }
+
   if (k_tapers < 1) {
-    warning(sprintf("k_tapers became %d after adjustment (nw=%s, series_length=%d). Must be >= 1. Aborting spectral step.", 
-                    as.integer(k_tapers), nw, length(mean_residual_for_spectrum)))
-    return(NULL)
+    warning(sprintf("k_tapers became %d after adjustment (nw=%.2f, series_length=%d). Must be >= 1. Aborting spectral step.", 
+                    k_tapers, nw, length(mean_residual_for_spectrum)))
+    res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
+    attr(res_empty, "freq_hz") <- numeric(0)
+    attr(res_empty, "freq_rad_s") <- numeric(0)
+    return(res_empty)
   }
 
   mt_res <- NULL
@@ -108,9 +140,15 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   spec_to_search <- mt_res$spec[keep_indices]
   freq_to_search <- mt_res$freq[keep_indices]
 
-  # findpeaks returns a matrix: col1=amplitude, col2=peak_index, col3=start_index, col4=end_index
-  # We need indices relative to spec_to_search
+  if (verbose) {
+    message(sprintf("  Spectral search range: %.4f Hz to %.4f Hz (%d points)", min(freq_to_search), max(freq_to_search), length(freq_to_search)))
+    message(sprintf("  Summary of spec_to_search: Min=%.2e, Med=%.2e, Mean=%.2e, Max=%.2e, SD=%.2e", 
+                    min(spec_to_search), median(spec_to_search), mean(spec_to_search), max(spec_to_search), sd(spec_to_search)))
+  }
+
   peak_info_all <- pracma::findpeaks(spec_to_search, nups = 1, ndowns = 1, sortstr = TRUE)
+  if (verbose && !is.null(peak_info_all)) message(sprintf("  findpeaks found %d initial peaks. Top peak amplitude: %.2e at index %d", nrow(peak_info_all), if(nrow(peak_info_all)>0) peak_info_all[1,1] else NA, if(nrow(peak_info_all)>0) peak_info_all[1,2] else NA))
+  else if (verbose && is.null(peak_info_all)) message("  findpeaks returned NULL.")
 
   if (is.null(peak_info_all) || nrow(peak_info_all) == 0) {
     message("No initial peaks found in the spectrum by pracma::findpeaks.")
@@ -119,6 +157,8 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   
   # Peak prominence filter
   prom_thresh <- median(spec_to_search, na.rm = TRUE) + 3 * mad(spec_to_search, na.rm = TRUE)
+  if (verbose) message(sprintf("  Prominence threshold for peaks: %.2e", prom_thresh))
+  
   # Ensure threshold is a single finite number, if mad is 0 or spec_to_search is flat, this could be tricky
   if (!is.finite(prom_thresh)) {
     prom_thresh <- -Inf # Effectively disable filter if MAD is zero or issues
@@ -128,6 +168,8 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   # Keep peaks with amplitude (col 1) > prom_thresh
   # peak_info_all is already sorted by amplitude (col 1) due to sortstr=TRUE
   peak_info <- peak_info_all[peak_info_all[,1] > prom_thresh, , drop = FALSE]
+  if (verbose && !is.null(peak_info)) message(sprintf("  After prominence filter, %d peaks remain. Top peak amplitude: %.2e", nrow(peak_info), if(nrow(peak_info)>0) peak_info[1,1] else NA))
+  else if (verbose && is.null(peak_info)) message("  peak_info is NULL after prominence filter (should be 0-row matrix if no peaks pass).")
 
   if (is.null(peak_info) || nrow(peak_info) == 0) {
     message(sprintf("No significant peaks found after prominence filter (threshold: %.4g).", prom_thresh))
@@ -141,9 +183,23 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   # Frequencies corresponding to these selected peaks
   selected_frequencies_hz <- freq_to_search[selected_peak_indices_in_searched_spec]
   
+  # Apply unique (Feedback 2.4)
+  if (length(selected_frequencies_hz) > 0) {
+    original_selected_freq_count <- length(selected_frequencies_hz)
+    selected_frequencies_hz <- unique(selected_frequencies_hz)
+    if (length(selected_frequencies_hz) < original_selected_freq_count && verbose) {
+        message(sprintf("  Reduced to %d unique peak frequencies from %d for regressor generation.", 
+                        length(selected_frequencies_hz), original_selected_freq_count))
+    }
+  }
+
   if (length(selected_frequencies_hz) == 0) {
-    message("No peaks selected after filtering.")
-    return(NULL)
+    if (verbose) message("No peaks selected after uniqueness filter to generate sine/cosine pairs.")
+    # Return consistent empty matrix with attributes
+    res_empty <- matrix(numeric(0), nrow=length(mean_residual_for_spectrum), ncol=0, dimnames=list(NULL,character(0)))
+    attr(res_empty, "freq_hz") <- numeric(0)
+    attr(res_empty, "freq_rad_s") <- numeric(0)
+    return(res_empty)
   }
 
   omega_rad_s <- 2 * pi * selected_frequencies_hz # Convert Hz to radians/sec
@@ -184,15 +240,16 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   message(sprintf("Generated %d sine/cosine pairs from %d spectral peaks.",
                   ncol(U_spectral_sines) / 2, length(selected_frequencies_hz)))
 
-  # Sprint 2 NDX-14: Apply BIC/AIC based selection
-  selected <- Select_Significant_Spectral_Regressors(
+  # Call Select_Significant_Spectral_Regressors
+  selected_regressors <- Select_Significant_Spectral_Regressors(
     y = mean_residual_for_spectrum,
     U_candidates = U_spectral_sines,
-    criterion = "BIC",
-    delta_threshold = 2
+    criterion = selection_criterion,
+    delta_threshold = selection_delta_threshold,
+    verbose = verbose
   )
 
-  return(selected)
+  return(selected_regressors) # This will now be a 0-col matrix with attrs if none selected
 }
 
 #' Select Spectral Regressors via Information Criterion
@@ -209,68 +266,131 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 #' @param criterion Character string, either "BIC" or "AIC". Default "BIC".
 #' @param delta_threshold Numeric, minimum decrease in the chosen information
 #'   criterion required to retain a candidate pair. Default 2.
+#' @param verbose Logical, whether to print verbose diagnostic messages.
 #' @return Matrix of selected regressors (or NULL if none selected). Attributes
 #'   "freq_hz" and "freq_rad_s" are propagated for the selected frequencies.
 #' @keywords internal
 #' @export
 Select_Significant_Spectral_Regressors <- function(y, U_candidates,
                                                    criterion = c("BIC", "AIC"),
-                                                   delta_threshold = 2) {
-  if (is.null(U_candidates) || !is.matrix(U_candidates) || ncol(U_candidates) < 2)
-    return(NULL)
+                                                   delta_threshold = 2,
+                                                   verbose = FALSE) {
+  if (is.null(U_candidates) || !is.matrix(U_candidates)) { # Allow 0-col matrix from caller
+    if (verbose) message("[Select_SSR] U_candidates is NULL or not a matrix. Returning empty attributed matrix.")
+    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
+    attr(res_empty, "freq_hz") <- numeric(0)
+    attr(res_empty, "freq_rad_s") <- numeric(0)
+    attr(res_empty, "selected_pair_indices") <- integer(0)
+    return(res_empty)
+  }
+  if (ncol(U_candidates) < 2 && ncol(U_candidates) != 0 ) { # if not 0, must be pairs
+     warning("[Select_SSR] U_candidates columns not in pairs or empty. Returning empty matrix.")
+    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
+    attr(res_empty, "freq_hz") <- numeric(0)
+    attr(res_empty, "freq_rad_s") <- numeric(0)
+    attr(res_empty, "selected_pair_indices") <- integer(0)
+    return(res_empty)
+  }
+  
   criterion <- match.arg(criterion)
   n_pairs <- ncol(U_candidates) %/% 2
-  if (n_pairs < 1) return(NULL)
+  
+  # If U_candidates is a 0-column matrix (e.g. no peaks from ndx_spectral_sines), n_pairs will be 0
+  if (n_pairs < 1) {
+    if (verbose) message("[Select_SSR] No candidate pairs to select from. Returning empty attributed matrix.")
+    res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
+    # Propagate attributes if U_candidates had them, even if empty
+    hz_attr <- attr(U_candidates, "freq_hz")
+    rad_attr <- attr(U_candidates, "freq_rad_s")
+    attr(res_empty, "freq_hz") <- if (!is.null(hz_attr)) hz_attr else numeric(0)
+    attr(res_empty, "freq_rad_s") <- if (!is.null(rad_attr)) rad_attr else numeric(0) 
+    attr(res_empty, "selected_pair_indices") <- integer(0)
+    return(res_empty)
+  }
 
   calc_ic <- function(y, X) {
     fit <- stats::lm.fit(X, y)
     rss <- sum(fit$residuals^2)
     n <- length(y)
-    k <- ncol(X)
-    sigma2 <- rss / n
-    if (criterion == "BIC") {
+    k <- ncol(X) 
+    sigma2 <- rss / n # MLE of variance (common for ICs)
+    # Classical BIC/AIC: n*log(RSS/n) + k*log(n) or n*log(RSS/n) + 2k. 
+    # Our n*log(sigma2) is equivalent to n*log(RSS/n).
+    ic_val <- if (criterion == "BIC") {
       n * log(sigma2) + k * log(n)
-    } else {
+    } else { 
       n * log(sigma2) + 2 * k
     }
+    return(ic_val)
   }
 
   base_X <- matrix(1, nrow = length(y), ncol = 1)
   base_ic <- calc_ic(y, base_X)
-  selected <- integer(0)
-  remaining <- seq_len(n_pairs)
-  current_X <- base_X
+  if (verbose) message(sprintf("[Select_SSR] Base IC (intercept-only): %.4f (criterion: %s)", base_ic, criterion))
+  
+  selected <- integer(0) 
+  remaining <- seq_len(n_pairs) 
+  current_X <- base_X 
 
+  iter <- 0
   repeat {
-    best_ic <- Inf
-    best_pair <- NA
+    iter <- iter + 1
+    if (verbose && iter > n_pairs +1 ) { message("Select_SSR: Breaking runaway loop"); break} # safety break
+    if (verbose) message(sprintf("  [Select_SSR] Iteration %d, current_base_ic: %.4f, selected pairs: %s, remaining pairs: %s", 
+                               iter, base_ic, paste(selected,collapse=","), paste(remaining,collapse=",")))
+    best_ic_this_iter <- Inf 
+    best_pair_this_iter <- NA 
+
     for (idx in remaining) {
       cols <- (2 * (idx - 1) + 1):(2 * idx)
       X_tmp <- cbind(current_X, U_candidates[, cols, drop = FALSE])
       ic_val <- calc_ic(y, X_tmp)
-      if (ic_val < best_ic) {
-        best_ic <- ic_val
-        best_pair <- idx
+      if (verbose) message(sprintf("    Trying pair %d (cols %d-%d), IC = %.4f", idx, cols[1], cols[2], ic_val))
+      if (ic_val < best_ic_this_iter) {
+        best_ic_this_iter <- ic_val
+        best_pair_this_iter <- idx
       }
     }
 
-    if (is.na(best_pair)) break
+    if (is.na(best_pair_this_iter)) {
+        if (verbose) message("    No best pair found in this iteration (all remaining pairs resulted in non-improvement or Inf IC).")
+        break 
+    }
 
-    if ((base_ic - best_ic) > delta_threshold) {
-      cols <- (2 * (best_pair - 1) + 1):(2 * best_pair)
-      current_X <- cbind(current_X, U_candidates[, cols, drop = FALSE])
-      base_ic <- best_ic
-      selected <- c(selected, best_pair)
-      remaining <- setdiff(remaining, best_pair)
-      if (length(remaining) == 0) break
+    if (verbose) message(sprintf("    Iteration %d: Best pair to add is %d with IC = %.4f (improvement from %.4f is %.4f)", 
+                               iter, best_pair_this_iter, best_ic_this_iter, base_ic, base_ic - best_ic_this_iter))
+
+    if ((base_ic - best_ic_this_iter) > delta_threshold) { 
+      cols_to_add <- (2 * (best_pair_this_iter - 1) + 1):(2 * best_pair_this_iter)
+      current_X <- cbind(current_X, U_candidates[, cols_to_add, drop = FALSE])
+      base_ic <- best_ic_this_iter 
+      selected <- c(selected, best_pair_this_iter)
+      remaining <- setdiff(remaining, best_pair_this_iter)
+      if (verbose) message(sprintf("    Pair %d ADDED. New base_ic: %.4f. Selected so far: %s", 
+                                 best_pair_this_iter, base_ic, paste(selected, collapse=",")))
+      if (length(remaining) == 0) {
+          if (verbose) message("    No more pairs remaining to test.")
+          break 
+      }
     } else {
-      break
+      if (verbose) message(sprintf("    Best pair %d did not meet delta_threshold (%.4f <= %.4f). Stopping.", 
+                                 best_pair_this_iter, base_ic - best_ic_this_iter, delta_threshold))
+      break 
     }
   }
 
-  if (length(selected) == 0) return(NULL)
+  if (length(selected) == 0) {
+      if (verbose) message("[Select_SSR] No pairs selected. Returning 0-column matrix with attributes.")
+      res_empty <- matrix(numeric(0), nrow = length(y), ncol = 0, dimnames = list(NULL, character(0)))
+      attr(res_empty, "freq_hz") <- numeric(0)
+      attr(res_empty, "freq_rad_s") <- numeric(0)
+      attr(res_empty, "selected_pair_indices") <- integer(0)
+      return(res_empty)
+  }
   cols_final <- unlist(lapply(selected, function(i) (2 * (i - 1) + 1):(2 * i)))
   res <- U_candidates[, cols_final, drop = FALSE]
+  if (verbose) message(sprintf("[Select_SSR] Selected %d pairs. Final matrix dim: %s", length(selected), paste(dim(res),collapse="x")))
+  
   hz <- attr(U_candidates, "freq_hz")
   rad <- attr(U_candidates, "freq_rad_s")
   if (!is.null(hz)) attr(res, "freq_hz") <- hz[selected]
@@ -278,3 +398,4 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
   attr(res, "selected_pair_indices") <- selected
   res
 }
+

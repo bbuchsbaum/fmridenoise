@@ -66,9 +66,13 @@ NDX_Process_Subject <- function(Y_fmri,
     lambda2_grid = 10^seq(-3, 0, length.out = 5),
     hrf_min_good_voxels = 50L,
     return_full_model = FALSE,
-    # Add missing options that caused test failures
-    hrf_cluster_method = "none", # Default to no clustering for initial pass logic
-    num_hrf_clusters = 1 # Consistent with no clustering
+    hrf_cluster_method = "none", # Default to no clustering
+    num_hrf_clusters = 1,      # Consistent with no clustering
+    # Options for sparse event handling in HRF estimation (NDX-12)
+    hrf_min_events_for_fir = 6L, 
+    hrf_low_event_threshold = 12L,
+    hrf_target_event_count_for_lambda_scaling = 20L,
+    hrf_use_canonical_fallback_for_ultra_sparse = FALSE # Default to attempting scaled/damped FIR
   )
   opts_hrf <- utils::modifyList(default_opts_hrf, user_options$opts_hrf %||% list())
 
@@ -118,21 +122,51 @@ NDX_Process_Subject <- function(Y_fmri,
     # For Sprint 2 NDX-12, this will become more complex with clustering and auto-adaptation.
     # For now, retain single global HRF estimation logic from Sprint 1.
     if (verbose) message(sprintf("Pass %d: Estimating FIR HRFs...", pass_num))
-    estimated_hrfs <- ndx_estimate_initial_hrfs(
+    estimated_hrfs_raw <- ndx_estimate_initial_hrfs(
       Y_fmri = Y_fmri, 
-      pass0_residuals = Y_residuals_current, # Use current residuals for good voxel selection
+      pass0_residuals = Y_residuals_current, 
       events = events, 
       run_idx = run_idx, 
       TR = TR, 
-      spike_TR_mask = current_spike_TR_mask, # Pass through current mask
+      spike_TR_mask = current_spike_TR_mask, 
       user_options = opts_hrf
     )
-    current_pass_results$estimated_hrfs <- estimated_hrfs
-    if (is.null(estimated_hrfs) && verbose) {
-        message(sprintf("Pass %d: HRF estimation returned NULL. Subsequent steps might be affected.", pass_num))
+    current_pass_results$estimated_hrfs_per_cluster <- estimated_hrfs_raw # Store for diagnostics
+
+    if (!is.null(estimated_hrfs_raw) && tibble::is_tibble(estimated_hrfs_raw) && nrow(estimated_hrfs_raw) > 0) {
+      if (verbose) message(sprintf("  Pass %d: Received %d raw HRF estimates (per cluster/condition).", pass_num, nrow(estimated_hrfs_raw)))
+      # For ndx_build_design_matrix, select/derive one HRF per condition.
+      # Strategy for Sprint 2 initial: Use HRF from cluster_id 1 if available, otherwise average or other rule.
+      # Simplest for now: if num_hrf_clusters in opts_hrf is 1, it should be fine.
+      # If > 1, take cluster_id 1, or average if that makes sense. 
+      # For now, if num_hrf_clusters > 1, this will effectively use cluster 1 data for all voxels if no voxel-specific assignment is done before ndx_build_design_matrix.
+      
+      if (any(colnames(estimated_hrfs_raw) == "cluster_id")) {
+         # If clustering was done and produced results for multiple clusters.
+         # We need to select one HRF per *original condition name* for ndx_build_design_matrix.
+         # Current strategy: pick cluster 1's HRF for each condition if available.
+         estimated_hrfs_for_design <- estimated_hrfs_raw[estimated_hrfs_raw$cluster_id == 1L, 
+                                                         c("condition", "hrf_estimate", "taps")]
+         # Remove any potential duplicates if a condition somehow got multiple cluster_id=1 entries (unlikely)
+         estimated_hrfs_for_design <- unique(tibble::as_tibble(estimated_hrfs_for_design))
+      } else {
+         # No cluster_id column, means it was global estimation (num_clusters=1)
+         estimated_hrfs_for_design <- tibble::as_tibble(estimated_hrfs_raw[, c("condition", "hrf_estimate", "taps")])
+      }
+      
+      original_conditions <- unique(as.character(events$condition))
+      missing_hrfs <- original_conditions[!original_conditions %in% estimated_hrfs_for_design$condition]
+      if (length(missing_hrfs) > 0 && verbose) {
+          message(sprintf("    Pass %d: Not all conditions have a selected HRF for design matrix. Missing: %s", pass_num,
+                          paste(missing_hrfs, collapse=", ")))
+      }
+      current_pass_results$estimated_hrfs <- estimated_hrfs_for_design
+    } else {
+      if (verbose) message(sprintf("Pass %d: HRF estimation returned NULL or empty. No task regressors will be built for design matrix.", pass_num))
+      current_pass_results$estimated_hrfs <- NULL 
     }
 
-    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13 / NDX-15) ---
+    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13) ---
     if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
 
     # Determine k_rpca_global (Adaptive rank logic, NDX-13)

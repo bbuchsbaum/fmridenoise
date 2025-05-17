@@ -36,11 +36,10 @@ components to be returned (columns in the output matrix).}
   Options are "concat_svd" or "iterative". Default: "concat_svd".}
 }
 \value{
-A list with elements `C_components` and `spike_TR_mask`. `C_components` is a
-matrix of concatenated temporal nuisance components (total_timepoints x
-k\_global\_target). `spike_TR_mask` is a logical vector flagging TRs with
-non-zero sparse activity. Returns NULL if errors occur or no components
-generated.
+A list with elements:
+  - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
+  - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
+  Returns NULL if errors occur or no components generated.
 }
 \description{
 This function implements a multi-run RPCA strategy. It performs RPCA on each

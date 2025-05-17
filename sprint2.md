@@ -86,9 +86,14 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
 * Store `BETA_HISTORY_PER_PASS` and `DIAGNOSTICS_PER_PASS`.
 [ ] 2. **NDX-12: [HRF-Est] Integrate Full `NDx_FusedFIR` with K-Medoids Clustering**
 * Implement k-medoids clustering (e.g., using `cluster::pam`) on "good voxels" based on residuals from the *previous* ND-X pass (or Pass-0 for the first iteration).
-* Fully integrate the `NDx_FusedFIR` R function (from the implementation-ready pseudocode).
+* Fully integrate the `NDx_FusedFIR` R function (from the implementation-ready pseudocode), which includes robust FIR estimation.
+* **Incorporate robustness for sparse events within FIR estimation logic:**
+    * Implement event count check per condition (after spike masking).
+    * Add user option `opts_hrf$hrf_min_events_for_fir` (e.g., default 6). If actual events < this, return a default zero/damped HRF or use a canonical HRF (strategy to be refined, simplest is to return zero/damped FIR).
+    * Add user option `opts_hrf$hrf_low_event_threshold` (e.g., default 12) and `opts_hrf$hrf_target_event_count_for_lambda_scaling` (e.g., default 20).
+    * If actual events are between `hrf_min_events_for_fir` and `hrf_low_event_threshold`, scale fused-lasso lambdas by `sqrt(hrf_target_event_count_for_lambda_scaling / actual_events)` before the final fit after CV.
 * Implement initial `Auto_Adapt_HRF_Clusters` logic (e.g., merge highly similar, split high-variance).
-* Ensure `motion_outlier_mask` (derived from `S` component of RPCA or FD) and `voxel_R2` (from previous pass) are correctly passed and used for robust `ybar` calculation.
+* Ensure `motion_outlier_mask` (derived from `S` component of RPCA or FD, i.e., `current_spike_TR_mask`) and `voxel_R2` (from previous pass) are correctly passed and used for robust `ybar` calculation for clustering and per-cluster HRF estimation.
 [X] 3. **NDX-13: [RPCA] Implement Auto-Adaptive Rank for RPCA-L**
 * Implement `Auto_Adapt_RPCA_Rank` function using `k_elbow` logic (singular value drop-off, min/max clamping) as specified. (Function implemented and vetted as correct).
 * Update the RPCA module (NDX-4) to use this adaptive rank in subsequent iterations. (Workflow calls adaptive function; input singular values for adaptation need to be correctly piped from previous pass RPCA results).

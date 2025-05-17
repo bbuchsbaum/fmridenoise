@@ -10,7 +10,10 @@ ndx_spectral_sines(
   n_sine_candidates = 6,
   nyquist_guard_factor = 0.9,
   k_tapers = 5,
-  nw = 3
+  nw = 3,
+  selection_criterion = "BIC",
+  selection_delta_threshold = 2,
+  verbose = FALSE
 )
 }
 \arguments{
@@ -31,6 +34,13 @@ Defaults to 5.}
 
 \item{nw}{Numeric, the time-bandwidth product for `multitaper::spec.mtm`.
 Defaults to 3.}
+
+\item{selection_criterion}{Character string, either "BIC" or "AIC". Default "BIC".}
+
+\item{selection_delta_threshold}{Numeric, minimum decrease in the chosen information
+criterion required to retain a candidate pair. Default 2.}
+
+\item{verbose}{Logical, whether to print verbose diagnostic messages.}
 }
 \value{
 A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
