@@ -89,10 +89,10 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
 * Fully integrate the `NDx_FusedFIR` R function (from the implementation-ready pseudocode).
 * Implement initial `Auto_Adapt_HRF_Clusters` logic (e.g., merge highly similar, split high-variance).
 * Ensure `motion_outlier_mask` (derived from `S` component of RPCA or FD) and `voxel_R2` (from previous pass) are correctly passed and used for robust `ybar` calculation.
-[ ] 3. **NDX-13: [RPCA] Implement Auto-Adaptive Rank for RPCA-L**
-* Implement `Auto_Adapt_RPCA_Rank` function using `k_elbow` logic (singular value drop-off, min/max clamping) as specified.
-* Update the RPCA module (NDX-4) to use this adaptive rank in subsequent iterations.
-[ ] 4. **NDX-14: [Spectral] Implement BIC/AIC Selection for Spectral Sines**
+[X] 3. **NDX-13: [RPCA] Implement Auto-Adaptive Rank for RPCA-L**
+* Implement `Auto_Adapt_RPCA_Rank` function using `k_elbow` logic (singular value drop-off, min/max clamping) as specified. (Function implemented and vetted as correct).
+* Update the RPCA module (NDX-4) to use this adaptive rank in subsequent iterations. (Workflow calls adaptive function; input singular values for adaptation need to be correctly piped from previous pass RPCA results).
+[X] 4. **NDX-14: [Spectral] Implement BIC/AIC Selection for Spectral Sines**
 * Implement `Select_Significant_Spectral_Regressors` using `ΔBIC` (or AIC) to prune candidate spectral sines, as specified.
 * Update the Spectral module (NDX-5) to use this selection logic.
 [ ] 5. **NDX-15: [Spikes-S] Implement Handling of Sparse Component `S` from RPCA**
@@ -132,9 +132,53 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
 * RPCA R package (`rpca` or similar) is functional.
 * Multitaper spectrum package (`multitaper` or `psd`) is functional.
 * Clustering package (`cluster::pam`) is functional.
+
 **Out of Scope for Sprint 2 (deferred to Sprint 3):**
 * Full, polished HTML report with all progressive enhancement visualizations and Annihilation Verdict grading.
 * Final, highly optimized `n_threads` usage across all C++/Rcpp components.
 * Exhaustive stress-testing against diverse "pathological" datasets (initial robustness via fallbacks in place).
 * Advanced `S_t,v` based precision re-weighting fully integrated into the ridge objective.
 * User-configurable manual overrides for all auto-adaptive parameters (focus on auto-pilot first).
+
+---
+## Addendum: Detailed Plan for NDX-15 (Spike Handling from RPCA 'S' Component)
+
+This addendum outlines the specific implementation steps for generating and utilizing the `spike_TR_mask` as part of ticket NDX-15.
+
+**A. Modifications to `ndx_rpca_temporal_components_multirun` (in `R/ndx_rpca.R`):**
+
+1.  **Initialization (before per-run loop):**
+    *   Initialize `per_run_spike_TR_masks <- list()` to store logical masks for each run.
+
+2.  **Inside the Per-Run RPCA Loop (for each `run_name` and its sparse component `S_r_t` which is Voxels x Time_r):
+    *   **a. Early Abort for Empty S:** If `sum(abs(S_r_t), na.rm = TRUE) < 1e-9`, then `spike_TR_mask_run <- rep(FALSE, ncol(S_r_t))`. Store this in `per_run_spike_TR_masks[[run_name]]` and proceed to the next run.
+    *   **b. Calculate Per-TR Spike Summary (`s_t_star_run`):**
+        *   `s_t_star_run <- apply(abs(S_r_t), 2, stats::median, na.rm = TRUE)`.
+    *   **c. Threshold `s_t_star_run` to get `spike_TR_mask_run`:**
+        *   Retrieve/define `rpca_spike_mad_thresh` and `rpca_spike_percentile_thresh` from `current_opts` (add to defaults in `ndx_rpca_temporal_components_multirun`).
+        *   Calculate `mad_s_t_star`.
+        *   If `mad_s_t_star` is too small, use percentile threshold; otherwise, use MAD-based threshold.
+        *   `spike_TR_mask_run <- s_t_star_run > threshold_s_t_star`.
+    *   **d. Store Per-Run Mask:** `per_run_spike_TR_masks[[run_name]] <- spike_TR_mask_run`.
+
+3.  **After the Per-Run RPCA Loop (before returning from `ndx_rpca_temporal_components_multirun`):
+    *   **e. Combine Per-Run Masks into Global `spike_TR_mask`:**
+        *   `global_spike_TR_mask <- unlist(per_run_spike_TR_masks[names(Y_residuals_list)], use.names = FALSE)`.
+        *   Validate length against `nrow(Y_residuals_cat)`.
+    *   **f. Update Function Return Value:** Ensure the function returns a list including `spike_TR_mask = global_spike_TR_mask` (along with `C_components`, `S_matrix_cat` if needed, and `V_global_singular_values`).
+
+**B. Modifications to `NDX_Process_Subject` (in `R/ndx_workflow.R`):**
+
+1.  **Initialize `current_spike_TR_mask`:** Existing initialization is good.
+2.  **Process `rpca_out`:** Ensure `rpca_out$spike_TR_mask` is correctly extracted and ORed with `current_spike_TR_mask`.
+3.  **Pass `current_spike_TR_mask` to `ndx_estimate_initial_hrfs`:** Already done.
+
+**C. Add New User Options (to `default_opts` in `ndx_rpca_temporal_components_multirun`):**
+
+*   `rpca_spike_mad_thresh` (e.g., default `3.0`).
+*   `rpca_spike_percentile_thresh` (e.g., default `0.98`).
+
+**D. Testing (as part of NDX-20):**
+
+*   Test cases with known spikes.
+*   Verify `spike_TR_mask` generation and its effect in HRF estimation.
