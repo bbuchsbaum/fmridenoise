@@ -191,3 +191,19 @@ test_that("calculate_R2_voxelwise errors on mismatched dimensions", {
   expect_error(calculate_R2_voxelwise(Y_obs, Y_res_wrong_rows), "Dimensions of Y_observed and Y_residuals must match.")
   expect_error(calculate_R2_voxelwise(Y_obs, Y_res_wrong_cols), "Dimensions of Y_observed and Y_residuals must match.")
 }) 
+test_that("calculate_R2_voxelwise handles all-NA columns and extra NA residuals", {
+  Y_obs <- matrix(c(1, NA, 3, 4,  NA, NA, NA, NA), ncol = 2)
+  Y_res <- matrix(c(0.1, 0.2, NA, -0.1,  0.5, -0.5, 0.2, -0.2), ncol = 2)
+
+  # Manual R2 for first column ignoring NA residual
+  mask1 <- !is.na(Y_obs[,1])
+  y_obs1 <- Y_obs[mask1, 1]
+  y_res1 <- Y_res[mask1, 1]
+  tss1 <- sum((y_obs1 - mean(y_obs1))^2)
+  rss1 <- sum(y_res1^2, na.rm = TRUE)
+  expected_r2_col1 <- if (abs(tss1) < 1e-9) 0 else max(0, 1 - rss1 / tss1)
+
+  r2_vals <- calculate_R2_voxelwise(Y_obs, Y_res)
+  expect_equal(r2_vals[1], expected_r2_col1, tolerance = 1e-9)
+  expect_equal(r2_vals[2], 0)
+})
