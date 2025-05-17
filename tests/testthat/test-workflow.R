@@ -48,14 +48,19 @@ user_options_test <- list(
   ),
   opts_hrf = list(
     hrf_fir_taps = 6,
+    hrf_fir_span_seconds = 12, # TR_test * hrf_fir_taps = 2*6=12. Using explicit value.
     good_voxel_R2_threshold = -Inf, # Use all voxels for HRF for simplicity
     lambda1_grid = c(0.1), # Minimal grid for speed
     lambda2_grid = c(0.1),
-    cv_folds = 2 # Minimal folds
+    cv_folds = 2, # Minimal folds
+    hrf_min_good_voxels = 1, # Allow even with 1 voxel for minimal test
+    hrf_cluster_method = "none",
+    num_hrf_clusters = 1 
   ),
   opts_rpca = list(
-    k_global_target = 2, # Small number of components
+    k_global_target = 2, 
     rpca_lambda_auto = FALSE,
+    lambda = 0.1 
     rpca_lambda_fixed = 0.1 # Provide a small lambda if auto is FALSE
   ),
   opts_spectral = list(
@@ -69,15 +74,19 @@ user_options_test <- list(
   opts_ridge = list(
     lambda_ridge = 0.5
   ),
-  task_regressor_names_for_extraction = c("task_TaskA", "task_TaskB")
+  task_regressor_names_for_extraction = c("task_TaskA", "task_TaskB"),
+  # Workflow control options directly in user_options_test
+  max_passes = 2, 
+  min_des_gain_convergence = -Inf, 
+  min_rho_noise_projection_convergence = -Inf 
 )
 
-test_that("ndx_run_sprint1 runs with minimal valid inputs and returns correct structure", {
-  skip_on_cran() # Potentially long-running test
+test_that("NDX_Process_Subject runs with minimal valid inputs and returns correct structure", {
+  # skip_on_cran() # Potentially long-running test - REMOVED FOR NOW
   
   workflow_output <- NULL
   expect_no_error({
-    workflow_output <- ndx_run_sprint1(
+    workflow_output <- NDX_Process_Subject(
       Y_fmri = Y_fmri_test,
       events = events_test,
       motion_params = motion_params_test,
@@ -91,29 +100,37 @@ test_that("ndx_run_sprint1 runs with minimal valid inputs and returns correct st
   expect_true(is.list(workflow_output), "Workflow output should be a list")
   
   expected_names <- c(
-    "Y_residuals_pass0", "pass0_vars", "estimated_hrfs", 
-    "rpca_components", "spectral_sines", "X_full_design",
-    "Y_whitened", "X_whitened", "ar_coeffs_voxelwise", "na_mask_whitening",
-    "ridge_betas_whitened", "final_task_betas"
+    "final_task_betas", "Y_residuals_final_unwhitened", "ar_coeffs_voxelwise",
+    "rpca_components", "spectral_sines", "estimated_hrfs", "pass0_vars",
+    "na_mask_whitening", "X_full_design_final", "diagnostics_per_pass",
+    "beta_history_per_pass", "num_passes_completed"
   )
   expect_named(workflow_output, expected = expected_names, ignore.order = TRUE)
   
   # Basic dimension checks for key matrix outputs
-  expect_equal(dim(workflow_output$Y_residuals_pass0), dim(Y_fmri_test))
+  expect_equal(dim(workflow_output$Y_residuals_final_unwhitened), dim(Y_fmri_test))
   expect_true(is.numeric(workflow_output$pass0_vars) && length(workflow_output$pass0_vars) == 1)
   
-  if (!is.null(workflow_output$X_full_design)) {
-      expect_equal(nrow(workflow_output$X_full_design), total_timepoints_test)
+  if (!is.null(workflow_output$X_full_design_final)) {
+      expect_equal(nrow(workflow_output$X_full_design_final), total_timepoints_test)
   }
   
-  # Check dimensions of whitened data if X_full_design was created
-  if (!is.null(workflow_output$X_whitened)) {
-    expect_equal(dim(workflow_output$Y_whitened), dim(Y_fmri_test))
-    expect_equal(nrow(workflow_output$X_whitened), total_timepoints_test)
-    expect_equal(ncol(workflow_output$X_whitened), ncol(workflow_output$X_full_design))
-    expect_true(is.logical(workflow_output$na_mask_whitening))
-    expect_length(workflow_output$na_mask_whitening, total_timepoints_test)
+  # Check diagnostics_per_pass structure
+  expect_true(is.list(workflow_output$diagnostics_per_pass))
+  expect_length(workflow_output$diagnostics_per_pass, workflow_output$num_passes_completed)
+  if (workflow_output$num_passes_completed > 0) {
+    expect_true(all(sapply(workflow_output$diagnostics_per_pass, function(p) "DES" %in% names(p))))
+    if (workflow_output$num_passes_completed > 1) { # Rho is calculated from pass 1 onwards effectively for convergence
+         # Rho might be NA if no nuisance components or residuals in a pass
+         # expect_true(all(sapply(workflow_output$diagnostics_per_pass, function(p) "rho_noise_projection" %in% names(p))))
+    }
   }
+  expect_true(is.list(workflow_output$beta_history_per_pass))
+  expect_length(workflow_output$beta_history_per_pass, workflow_output$num_passes_completed)
+  
+  # Check dimensions of whitened data if X_full_design_final was created
+  # Note: Y_whitened and X_whitened are intermediate from the last pass, not primary outputs now
+  # We can check their presence in the last element of a more detailed per-pass result if needed later.
   
   # Check ar_coeffs if present
   if (!is.null(workflow_output$ar_coeffs_voxelwise)) {
