@@ -12,9 +12,13 @@ calculate_R2_voxelwise(Y_observed, Y_residuals)
 \item{Y_residuals}{Matrix of residuals from a model (timepoints x voxels).}
 }
 \value{
-A numeric vector of R-squared values, one for each voxel.
+A numeric vector of R-squared values, one for each voxel. Names are stripped
+from the returned vector.
 }
 \description{
-Calculate Voxel-wise R-squared
+Calculate Voxel-wise R-squared. For each voxel valid observations are
+selected using \code{!is.na(Y_observed[, j])}. The total sum of squares (TSS)
+and residual sum of squares (RSS) are computed from these valid values only.
+If TSS is zero the returned R\eqn{^2} value is 0.
 }
 \keyword{internal}

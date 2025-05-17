@@ -49,6 +49,11 @@ calculate_residuals_ols <- function(Y, X) {
 #' @param Y_observed Matrix of observed data (timepoints x voxels).
 #' @param Y_residuals Matrix of residuals from a model (timepoints x voxels).
 #' @return A numeric vector of R-squared values, one for each voxel.
+#'   Names are stripped from the returned vector.
+#' @details Valid observations for each voxel are selected using
+#'   `!is.na(Y_observed[, j])`. Total Sum of Squares (TSS) and Residual Sum of
+#'   Squares (RSS) are computed from these valid values only. If the calculated
+#'   TSS is zero the returned R\eqn{^2} for that voxel is set to zero.
 #' @importFrom matrixStats colVars
 #' @keywords internal
 #' @export
@@ -56,15 +61,30 @@ calculate_R2_voxelwise <- function(Y_observed, Y_residuals) {
   if (nrow(Y_observed) != nrow(Y_residuals) || ncol(Y_observed) != ncol(Y_residuals)) {
     stop("Dimensions of Y_observed and Y_residuals must match.")
   }
-  
-  n_obs_per_voxel <- apply(Y_observed, 2, function(x) sum(!is.na(x)))
-  # TSS = Var(X) * (n-1) = Sum of (X_i - mean(X))^2
-  TSS <- matrixStats::colVars(Y_observed, na.rm = TRUE) * (n_obs_per_voxel - 1)
-  RSS <- colSums(Y_residuals^2, na.rm = TRUE) 
-  
-  R2 <- 1 - (RSS / TSS)
-  R2[TSS < 1e-9] <- 0 # If TSS is effectively zero, R2 is 0 (or undefined, treat as 0 for practical purposes)
-  R2[!is.finite(R2)] <- 0 
-  R2[R2 < 0] <- 0 
+
+  n_vox <- ncol(Y_observed)
+  R2 <- numeric(n_vox)
+  for (j in seq_len(n_vox)) {
+    mask <- !is.na(Y_observed[, j])
+    if (sum(mask) == 0) {
+      R2[j] <- 0
+      next
+    }
+
+    y_obs <- Y_observed[mask, j]
+    y_res <- Y_residuals[mask, j]
+    TSS <- sum((y_obs - mean(y_obs))^2)
+    RSS <- sum(y_res^2, na.rm = TRUE)
+
+    if (abs(TSS) < 1e-9) {
+      R2[j] <- 0
+    } else {
+      r2_val <- 1 - (RSS / TSS)
+      if (!is.finite(r2_val) || r2_val < 0) r2_val <- 0
+      R2[j] <- r2_val
+    }
+  }
+
+  R2 <- unname(R2)
   return(R2)
-} 
+}
