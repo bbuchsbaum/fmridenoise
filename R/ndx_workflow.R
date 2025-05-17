@@ -33,6 +33,7 @@
 #'   - `diagnostics_per_pass`: A list of diagnostic metrics for each pass.
 #'   - `beta_history_per_pass`: A list of beta estimates from each pass.
 #'   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
+#'   - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
 #' @export NDX_Process_Subject
@@ -76,12 +77,13 @@ NDX_Process_Subject <- function(Y_fmri,
   opts_whitening   <- user_options$opts_whitening %||% list()
   opts_ridge       <- user_options$opts_ridge %||% list()
   task_regressor_names <- user_options$task_regressor_names_for_extraction %||% character(0)
-  
+
   # Initialize storage for per-pass results
   diagnostics_per_pass <- list()
   beta_history_per_pass <- list()
   Y_residuals_current <- NULL # Will hold residuals from the previous pass
   VAR_BASELINE_FOR_DES <- NULL # From initial GLM
+  current_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
   
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
@@ -122,7 +124,7 @@ NDX_Process_Subject <- function(Y_fmri,
       events = events, 
       run_idx = run_idx, 
       TR = TR, 
-      spike_TR_mask = spike_TR_mask, # Pass this through
+      spike_TR_mask = current_spike_TR_mask, # Pass through current mask
       user_options = opts_hrf
     )
     current_pass_results$estimated_hrfs <- estimated_hrfs
@@ -130,38 +132,66 @@ NDX_Process_Subject <- function(Y_fmri,
         message(sprintf("Pass %d: HRF estimation returned NULL. Subsequent steps might be affected.", pass_num))
     }
 
-    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13) ---
-    # For Sprint 2 NDX-13, k_rpca_global will be adaptive.
+    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13 / NDX-15) ---
     if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
 
-    if (pass_num > 1) {
-      sv_vals <- tryCatch({
-        svd(Y_residuals_current, nu = 0, nv = 0)$d
-      }, error = function(e) NULL)
-
-      if (!is.null(sv_vals)) {
+    # Determine k_rpca_global (Adaptive rank logic, NDX-13)
+    # This adaptive logic will be fully effective when the correct singular values
+    # from a previous RPCA pass (or V_global construction) are fed into user_options.
+    if (pass_num > 1 && !is.null(user_options$opts_rpca$adaptive_k_singular_values)) {
+      sv_for_adapt <- user_options$opts_rpca$adaptive_k_singular_values
+      if (!is.null(sv_for_adapt) && is.numeric(sv_for_adapt) && length(sv_for_adapt) > 0) {
         drop_ratio <- opts_rpca$k_elbow_drop_ratio %||% 0.02
         k_min <- opts_rpca$k_rpca_min %||% 20L
         k_max <- opts_rpca$k_rpca_max %||% 50L
         k_rpca_global <- Auto_Adapt_RPCA_Rank(
-          sv_vals,
+          sv_for_adapt,
           drop_ratio = drop_ratio,
           k_min = k_min,
           k_max = k_max
         )
+        if (verbose) message(sprintf("    Pass %d: Adaptive k_rpca_global set to %d", pass_num, k_rpca_global))
       } else {
-        k_rpca_global <- opts_rpca$k_global_target %||% 5
+        k_rpca_global <- opts_rpca$k_global_target %||% 5 # Fallback if adaptive inputs are bad
+        if (verbose) message(sprintf("    Pass %d: Invalid/NULL singular values for adaptation, using k_rpca_global = %d from opts/default", pass_num, k_rpca_global))
       }
-    } else {
+    } else { # First pass or no adaptive singular values provided
       k_rpca_global <- opts_rpca$k_global_target %||% 5
+      if (verbose) message(sprintf("    Pass %d: Using k_rpca_global = %d (initial or no adaptation values)", pass_num, k_rpca_global))
     }
-    rpca_components <- ndx_rpca_temporal_components_multirun(
+
+    # Call ndx_rpca_temporal_components_multirun
+    # This function is now expected to return a list: list(C_components = ..., S_matrix = ..., spike_TR_mask = ...)
+    rpca_out <- ndx_rpca_temporal_components_multirun(
       Y_residuals_cat = Y_residuals_current,
       run_idx = run_idx,
       k_global_target = k_rpca_global,
-      user_options = opts_rpca
+      user_options = opts_rpca 
     )
+
+    # Process rpca_out for C_components and spike_TR_mask (NDX-15)
+    if (!is.null(rpca_out) && is.list(rpca_out)) {
+      rpca_components <- rpca_out$C_components # Might be NULL if RPCA failed internally
+      
+      # Update the overall spike_TR_mask by ORing with spikes from this RPCA pass
+      if (!is.null(rpca_out$spike_TR_mask) && is.logical(rpca_out$spike_TR_mask) && 
+          length(rpca_out$spike_TR_mask) == length(current_spike_TR_mask)) {
+        current_spike_TR_mask <- current_spike_TR_mask | rpca_out$spike_TR_mask 
+      } else if (!is.null(rpca_out$spike_TR_mask) && verbose) {
+        message("    Warning: spike_TR_mask from rpca_out is not a valid logical vector of correct length. Global spike mask not updated by this pass's RPCA.")
+      }
+      # Store S_matrix if NDX-15 requires it for other purposes later (e.g. precision weighting)
+      # current_pass_results$S_matrix_rpca <- rpca_out$S_matrix 
+    } else {
+      if (verbose && !is.null(rpca_out)) {
+          message("    Warning: rpca_out from ndx_rpca_temporal_components_multirun was not NULL but not a list as expected.")
+      } else if (verbose && is.null(rpca_out)) {
+          message("    ndx_rpca_temporal_components_multirun returned NULL (RPCA likely failed or yielded no components).")
+      }
+      rpca_components <- NULL 
+    }
     current_pass_results$rpca_components <- rpca_components
+    current_pass_results$spike_TR_mask <- current_spike_TR_mask # Store updated/current mask
 
     # --- 4. Spectral Nuisance Components (NDX-5 / NDX-14) ---
     # For Sprint 2 NDX-14, selection will be BIC/AIC based.
@@ -388,6 +418,7 @@ NDX_Process_Subject <- function(Y_fmri,
      estimated_hrfs = current_pass_results$estimated_hrfs, # From last pass
      pass0_vars = VAR_BASELINE_FOR_DES, # Original baseline variance
      na_mask_whitening = current_pass_results$na_mask_whitening,
+     spike_TR_mask = current_spike_TR_mask,
      X_full_design_final = current_pass_results$X_full_design, # From last pass
      diagnostics_per_pass = diagnostics_per_pass,
      beta_history_per_pass = beta_history_per_pass,

@@ -27,8 +27,10 @@
 #'   - `rpca_lambda_fixed` (numeric): Fixed lambda value if `rpca_lambda_auto` is FALSE.
 #'   - `rpca_merge_strategy` (character): Strategy for merging voxel-space components.
 #'     Options are "concat_svd" or "iterative". Default: "concat_svd".
-#' @return A matrix containing the concatenated temporal nuisance components `C_r`
-#'   (total_timepoints x k_global_target). Returns NULL if errors occur or no components generated.
+#' @return A list with elements:
+#'   - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
+#'   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
+#'   Returns NULL if errors occur or no components generated.
 #' @examples
 #' \dontrun{
 #' # --- Simulate multi-run data ---
@@ -132,6 +134,8 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   V_list <- list() # To store V_r (voxel-space components from each run)
   glitch_ratios_per_run <- numeric(length(Y_residuals_list))
   names(glitch_ratios_per_run) <- names(Y_residuals_list)
+  spike_mask_list <- vector("list", length(Y_residuals_list))
+  names(spike_mask_list) <- names(Y_residuals_list)
 
   message(sprintf("Starting per-run RPCA for %d runs...", length(Y_residuals_list)))
   for (r_idx in seq_along(Y_residuals_list)) {
@@ -276,6 +280,18 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
     } else {
       glitch_ratios_per_run[run_name] <- NA
     }
+
+    # Spike TR mask for this run using median |S| across voxels
+    if (!is.null(S_r_t) && length(S_r_t) > 0) {
+      if (sum(abs(S_r_t)) == 0) {
+        spike_mask_list[[run_name]] <- rep(FALSE, ncol(S_r_t))
+      } else {
+        S_t_star <- matrixStats::colMedians(abs(S_r_t))
+        spike_mask_list[[run_name]] <- S_t_star > 0
+      }
+    } else {
+      spike_mask_list[[run_name]] <- rep(FALSE, nrow(Er))
+    }
   } # End per-run RPCA loop
   
   # Filter out NULLs from V_list (runs that failed RPCA)
@@ -376,8 +392,17 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   print(glitch_ratios_per_run[!is.na(glitch_ratios_per_run)])
   message(sprintf("Mean Glitch Ratio across valid runs: %.3f", mean(glitch_ratios_per_run, na.rm=TRUE)))
   
+  # Combine spike masks in original run order
+  spike_TR_mask <- unlist(spike_mask_list[paste0("run_", unique_runs)])
+  if (is.null(spike_TR_mask)) {
+    spike_TR_mask <- rep(FALSE, nrow(Y_residuals_cat))
+  } else {
+    spike_TR_mask <- as.logical(spike_TR_mask)
+  }
+
   message(sprintf("Multi-run RPCA: Returning %d concatenated temporal components.", ncol(C_components_cat)))
-  return(C_components_cat)
+  return(list(C_components = C_components_cat,
+              spike_TR_mask = spike_TR_mask))
 }
 
 #' Iterative Grassmann Averaging of Voxel-Space Components

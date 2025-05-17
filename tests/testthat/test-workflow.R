@@ -101,7 +101,7 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
   expected_names <- c(
     "final_task_betas", "Y_residuals_final_unwhitened", "ar_coeffs_voxelwise",
     "rpca_components", "spectral_sines", "estimated_hrfs", "pass0_vars",
-    "na_mask_whitening", "X_full_design_final", "diagnostics_per_pass",
+    "na_mask_whitening", "spike_TR_mask", "X_full_design_final", "diagnostics_per_pass",
     "beta_history_per_pass", "num_passes_completed"
   )
   expect_named(workflow_output, expected = expected_names, ignore.order = TRUE)
@@ -113,6 +113,9 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
   if (!is.null(workflow_output$X_full_design_final)) {
       expect_equal(nrow(workflow_output$X_full_design_final), total_timepoints_test)
   }
+
+  expect_length(workflow_output$spike_TR_mask, total_timepoints_test)
+  expect_type(workflow_output$spike_TR_mask, "logical")
   
   # Check diagnostics_per_pass structure
   expect_true(is.list(workflow_output$diagnostics_per_pass))
