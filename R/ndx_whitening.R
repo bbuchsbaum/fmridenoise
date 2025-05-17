@@ -13,6 +13,8 @@
 #' @param global_ar_on_design Logical, if TRUE (default), a global AR model (averaged from successful
 #'   voxel-wise fits) is used to whiten `X_design_full`. If FALSE, `X_design_full` is not whitened,
 #'   and users should handle its whitening if necessary for downstream voxel-wise modeling.
+#' @param verbose Logical, if TRUE (default) progress messages are printed. Set to FALSE to silence
+#'   console output.
 #'
 #' @return A list containing:
 #'   - `Y_whitened`: The AR(order)-whitened fMRI data (timepoints x voxels).
@@ -33,12 +35,16 @@
 #' The whitened value `y*_t` (i.e., the estimate of `e_t`) is `y_t - phi_1 * y_{t-1} - ... - phi_order * y_{t-order}`.
 #' This transformation is applied to `Y_data` using voxel-specific coefficients. Unstable AR coefficients are set to zero (no whitening for that voxel).
 #' If `global_ar_on_design` is TRUE, `X_design_full` is whitened using averaged AR coefficients (from stable fits).
-#' The first `order` rows of the whitened matrices will contain NAs due to the filter initialization (`method="convolution", sides=1`).
+#' Whitening is performed with `stats::filter(method = "recursive")` so that the
+#' output represents the innovations of the AR model.
+#' The first `order` rows of the whitened matrices will contain `NA`s due to the recursive filter initialization.
 #' The `na_mask` in the output identifies these rows.
 #'
 #' @import stats
 #' @export
-ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, order = 2L, global_ar_on_design = TRUE) {
+ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
+                              order = 2L, global_ar_on_design = TRUE,
+                              verbose = TRUE) {
 
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {
     stop("Y_data must be a numeric matrix.")
@@ -71,7 +77,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
   var_innovations_voxelwise <- numeric(n_voxels)
   num_phi_zeroed <- 0 # Counter for voxels with phi set to 0 (failed fit or unstable)
   
-  message(sprintf("Estimating AR(%d) coefficients for %d voxels...", order, n_voxels))
+  if (verbose) message(sprintf("Estimating AR(%d) coefficients for %d voxels...", order, n_voxels))
   for (v_idx in seq_len(n_voxels)) {
     voxel_residuals <- Y_residuals_for_AR_fit[, v_idx]
     ar_fit <- NULL
@@ -108,11 +114,11 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
         num_phi_zeroed <- num_phi_zeroed + 1
     }
     
-    if (v_idx %% round(n_voxels/10) == 0 && n_voxels > 10) {
+    if (v_idx %% round(n_voxels/10) == 0 && n_voxels > 10 && verbose) {
         message(sprintf("  ...processed %d/%d voxels (%.0f%%)", v_idx, n_voxels, (v_idx/n_voxels)*100))
     }
   }
-  message("AR coefficient estimation complete.")
+  if (verbose) message("AR coefficient estimation complete.")
 
   # Report on initially NA coefficients (which are now 0 if stability check also failed or fit was null)
   # num_na_initial <- sum(is.na(var_innovations_voxelwise)) # More direct count of actual fit failures before stability
@@ -120,7 +126,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
   #     message(sprintf("AR fitting initially failed for %d/%d voxels (e.g., due to low variance).", num_na_initial, n_voxels))
   # }
   
-  if (num_phi_zeroed > 0) {
+  if (num_phi_zeroed > 0 && verbose) {
       message(sprintf("%d/%d voxels had AR coefficients set to zero (due to fit failure or instability). These will not be whitened.", num_phi_zeroed, n_voxels))
   }
   
@@ -128,13 +134,13 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
       warning(sprintf("More than 30%% (%d/%d) of voxels had AR coefficients set to zero. Consider checking input Y_residuals_for_AR_fit.", num_phi_zeroed, n_voxels))
   }
 
-  message("Applying voxel-specific AR filter to Y_data...")
+  if (verbose) message("Applying voxel-specific AR filter to Y_data...")
   Y_whitened <- .apply_ar_filter_voxelwise(Y_data, AR_coeffs_voxelwise, order)
-  message("Y_data whitening complete.")
+  if (verbose) message("Y_data whitening complete.")
 
   AR_coeffs_global <- NULL
   if (global_ar_on_design) {
-    message("Calculating global AR coefficients for X_design_full...")
+    if (verbose) message("Calculating global AR coefficients for X_design_full...")
     valid_coeffs_for_global_avg <- AR_coeffs_voxelwise[rowSums(AR_coeffs_voxelwise != 0) > 0 & !is.na(var_innovations_voxelwise), , drop = FALSE]
 
     if (nrow(valid_coeffs_for_global_avg) > 0) {
@@ -144,16 +150,16 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
           X_whitened <- X_design_full
           AR_coeffs_global <- NULL
       } else {
-          message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", ")))
+          if (verbose) message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", "))))
           X_whitened <- .apply_ar_filter_to_matrix_cols(X_design_full, AR_coeffs_global, order)
-          message("X_design_full whitening complete.")
+          if (verbose) message("X_design_full whitening complete.")
       }
     } else {
       warning("No valid voxel-wise AR coefficients available to compute global AR model for design matrix. Design matrix will not be whitened.")
       X_whitened <- X_design_full
     }
   } else {
-    message("Skipping whitening of X_design_full as per global_ar_on_design = FALSE.")
+    if (verbose) message("Skipping whitening of X_design_full as per global_ar_on_design = FALSE.")
     X_whitened <- X_design_full
   }
   
@@ -187,7 +193,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
   }
   
   M_whitened <- apply(M, 2, function(col_data) {
-    stats::filter(col_data, filter = filter_coeffs, method = "convolution", sides = 1)
+    stats::filter(col_data, filter = filter_coeffs, method = "recursive")
   })
   if (is.vector(M_whitened)) {
       M_whitened <- matrix(M_whitened, ncol=1)
@@ -217,7 +223,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit, ord
     filter_coeffs_for_voxel <- c(1, -as.numeric(voxel_coeffs_row_vec))
     Y_whitened_matrix[, v_idx] <- stats::filter(Y_data_matrix[, v_idx],
                                               filter = filter_coeffs_for_voxel,
-                                              method = "convolution", sides = 1)
+                                              method = "recursive")
   }
   return(Y_whitened_matrix)
 } 
