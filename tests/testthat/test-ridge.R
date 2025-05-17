@@ -229,4 +229,29 @@ test_that("ndx_extract_task_betas input validation works", {
   colnames_zero_row <- character(0)
   expect_warning(ndx_extract_task_betas(betas_zero_row, colnames_zero_row, tasks_good), "Input betas_whitened has 0 regressors.")
   expect_null(suppressWarnings(ndx_extract_task_betas(betas_zero_row, colnames_zero_row, tasks_good)))
-}) 
+})
+
+test_that("ndx_compute_projection_matrices constructs valid projectors", {
+  set.seed(1)
+  U_noise <- matrix(rnorm(20), nrow = 4)
+  proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 4)
+  expect_true(all(dim(proj$P_Noise) == c(4,4)))
+  expect_true(all(diag(proj$P_Signal + proj$P_Noise) <= 1.0001))
+})
+
+test_that("ndx_update_lambda_aggressiveness adjusts lambda", {
+  lam <- 1
+  expect_gt(ndx_update_lambda_aggressiveness(lam, 0.2), lam)
+  expect_lt(ndx_update_lambda_aggressiveness(lam, 0.0), lam)
+})
+
+test_that("ndx_solve_anisotropic_ridge works with projection matrices", {
+  td <- .create_ridge_test_data(50, 2, 1, c(2, -1), noise_sd = 0.1)
+  U_noise <- matrix(rnorm(100), nrow = 2)
+  proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 2)
+  lambda_vals <- list(lambda_parallel = 0.5, lambda_perp_signal = 0.05)
+  betas <- ndx_solve_anisotropic_ridge(td$Y, td$X, K_penalty_diag = NULL,
+                                       projection_mats = proj,
+                                       lambda_values = lambda_vals)
+  expect_equal(dim(betas), c(2,1))
+})

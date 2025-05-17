@@ -7,8 +7,10 @@
 ndx_solve_anisotropic_ridge(
   Y_whitened,
   X_whitened,
-  K_penalty_diag,
-  na_mask = NULL
+  K_penalty_diag = NULL,
+  na_mask = NULL,
+  projection_mats = NULL,
+  lambda_values = NULL
 )
 }
 \arguments{
@@ -21,6 +23,12 @@ Its length must be equal to `ncol(X_whitened)`.}
 
 \item{na_mask}{Optional. A logical vector where TRUE indicates timepoints to exclude.
 If NULL, all timepoints are used.}
+
+\item{projection_mats}{Optional list of projection matrices produced by
+\code{ndx_compute_projection_matrices}. Used when \code{K_penalty_diag} is not supplied.}
+
+\item{lambda_values}{Optional list with lambda parameters (e.g., \code{lambda_parallel},
+\code{lambda_perp_signal}) used to construct \code{K_penalty_diag} when it is not given.}
 }
 \value{
 A matrix of estimated beta coefficients (n_regressors x voxels/responses).
