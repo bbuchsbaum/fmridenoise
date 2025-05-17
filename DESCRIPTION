@@ -1,0 +1,34 @@
+Package: ndx
+Title: ND-X: Next-Generation fMRI Denoising
+Version: 0.0.0.9000
+Author: Your Name [aut, cre]
+Maintainer: Your Name <your.email@example.com>
+Authors@R: person("Your Name", email = "your.email@example.com", role = c("aut", "cre"),
+                  comment = c(ORCID = "YOUR-ORCID-ID"))
+Description: Implements the ND-X fMRI denoising pipeline, designed to
+    surpass existing methods by integrating advanced data-adaptive
+    techniques.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: false
+Remotes:
+    bbuchsbaum/fmrireg
+Imports:
+    fmrireg,
+    glmgen,
+    genlasso,
+    Rcpp (>= 1.0.0),
+    neuroim2,
+    oro.nifti,
+    multitaper,
+    psd,
+    rpca,
+    rsvd,
+    stats,
+    utils,
+    matrixStats,
+    tibble,
+    pracma
+Suggests:
+    testthat (>= 3.0.0)
+RoxygenNote: 7.3.2.9000

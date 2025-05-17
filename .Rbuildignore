@@ -1,0 +1,6 @@
+^\.Rcheck$
+^R/\.keep$
+^tests/testthat/\.keep$
+^\.DS_Store$ 
+repomix-output.xml
+run_tests.R
