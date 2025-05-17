@@ -166,56 +166,61 @@ NDX_Process_Subject <- function(Y_fmri,
       current_pass_results$estimated_hrfs <- NULL 
     }
 
-    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13) ---
+    # --- 3. RPCA Nuisance Components (NDX-4 / NDX-13 / NDX-15) ---
     if (verbose) message(sprintf("Pass %d: Identifying RPCA nuisance components...", pass_num))
 
+    # Prepare opts_rpca for the current pass, possibly with singular values from previous pass
+    current_opts_rpca <- opts_rpca 
+    if (pass_num > 1 && !is.null(diagnostics_per_pass[[pass_num - 1]]$V_global_singular_values_from_rpca)) {
+      current_opts_rpca$adaptive_k_singular_values <- diagnostics_per_pass[[pass_num - 1]]$V_global_singular_values_from_rpca
+      if (verbose) message(sprintf("    Pass %d: Using %d singular values from previous pass for RPCA rank adaptation.", 
+                                 pass_num, length(current_opts_rpca$adaptive_k_singular_values)))
+    } else if (pass_num > 1 && verbose) {
+      message(sprintf("    Pass %d: No singular values from previous pass available for RPCA rank adaptation.", pass_num))
+    }
+
     # Determine k_rpca_global (Adaptive rank logic, NDX-13)
-    # This adaptive logic will be fully effective when the correct singular values
-    # from a previous RPCA pass (or V_global construction) are fed into user_options.
-    if (pass_num > 1 && !is.null(user_options$opts_rpca$adaptive_k_singular_values)) {
-      sv_for_adapt <- user_options$opts_rpca$adaptive_k_singular_values
-      if (!is.null(sv_for_adapt) && is.numeric(sv_for_adapt) && length(sv_for_adapt) > 0) {
-        drop_ratio <- opts_rpca$k_elbow_drop_ratio %||% 0.02
-        k_min <- opts_rpca$k_rpca_min %||% 20L
-        k_max <- opts_rpca$k_rpca_max %||% 50L
+    if (pass_num > 1 && !is.null(current_opts_rpca$adaptive_k_singular_values)) {
+      sv_for_adapt <- current_opts_rpca$adaptive_k_singular_values
+      if (is.numeric(sv_for_adapt) && length(sv_for_adapt) > 0) {
+        drop_ratio <- current_opts_rpca$k_elbow_drop_ratio %||% 0.02
+        k_min <- current_opts_rpca$k_rpca_min %||% 20L
+        k_max <- current_opts_rpca$k_rpca_max %||% 50L
+        # Ensure Auto_Adapt_RPCA_Rank is available (it's exported from ndx_rpca.R)
         k_rpca_global <- Auto_Adapt_RPCA_Rank(
-          sv_for_adapt,
+          sv_for_adapt, 
           drop_ratio = drop_ratio,
           k_min = k_min,
           k_max = k_max
         )
         if (verbose) message(sprintf("    Pass %d: Adaptive k_rpca_global set to %d", pass_num, k_rpca_global))
       } else {
-        k_rpca_global <- opts_rpca$k_global_target %||% 5 # Fallback if adaptive inputs are bad
+        k_rpca_global <- current_opts_rpca$k_global_target %||% 5 # Fallback
         if (verbose) message(sprintf("    Pass %d: Invalid/NULL singular values for adaptation, using k_rpca_global = %d from opts/default", pass_num, k_rpca_global))
       }
-    } else { # First pass or no adaptive singular values provided
-      k_rpca_global <- opts_rpca$k_global_target %||% 5
-      if (verbose) message(sprintf("    Pass %d: Using k_rpca_global = %d (initial or no adaptation values)", pass_num, k_rpca_global))
+    } else { 
+      k_rpca_global <- current_opts_rpca$k_global_target %||% 5
+      if (verbose && pass_num == 1) message(sprintf("    Pass %d: Using initial k_rpca_global = %d (from opts/default)", pass_num, k_rpca_global))
+      else if (verbose && pass_num > 1) message(sprintf("    Pass %d: No adaptive singular values provided, using k_rpca_global = %d (from opts/default)", pass_num, k_rpca_global))
     }
 
-    # Call ndx_rpca_temporal_components_multirun
-    # This function is now expected to return a list: list(C_components = ..., S_matrix = ..., spike_TR_mask = ...)
     rpca_out <- ndx_rpca_temporal_components_multirun(
       Y_residuals_cat = Y_residuals_current,
       run_idx = run_idx,
-      k_global_target = k_rpca_global,
-      user_options = opts_rpca 
+      k_global_target = k_rpca_global, 
+      user_options = current_opts_rpca # Pass the potentially modified opts_rpca
     )
 
-    # Process rpca_out for C_components and spike_TR_mask (NDX-15)
     if (!is.null(rpca_out) && is.list(rpca_out)) {
-      rpca_components <- rpca_out$C_components # Might be NULL if RPCA failed internally
-      
-      # Update the overall spike_TR_mask by ORing with spikes from this RPCA pass
+      rpca_components <- rpca_out$C_components 
       if (!is.null(rpca_out$spike_TR_mask) && is.logical(rpca_out$spike_TR_mask) && 
           length(rpca_out$spike_TR_mask) == length(current_spike_TR_mask)) {
         current_spike_TR_mask <- current_spike_TR_mask | rpca_out$spike_TR_mask 
       } else if (!is.null(rpca_out$spike_TR_mask) && verbose) {
         message("    Warning: spike_TR_mask from rpca_out is not a valid logical vector of correct length. Global spike mask not updated by this pass's RPCA.")
       }
-      # Store S_matrix if NDX-15 requires it for other purposes later (e.g. precision weighting)
-      # current_pass_results$S_matrix_rpca <- rpca_out$S_matrix 
+      current_pass_results$S_matrix_rpca <- rpca_out$S_matrix_cat # Store S matrix
+      current_pass_results$V_global_singular_values_from_rpca <- rpca_out$V_global_singular_values # Store for next pass
     } else {
       if (verbose && !is.null(rpca_out)) {
           message("    Warning: rpca_out from ndx_rpca_temporal_components_multirun was not NULL but not a list as expected.")
@@ -223,9 +228,11 @@ NDX_Process_Subject <- function(Y_fmri,
           message("    ndx_rpca_temporal_components_multirun returned NULL (RPCA likely failed or yielded no components).")
       }
       rpca_components <- NULL 
+      current_pass_results$S_matrix_rpca <- NULL
+      current_pass_results$V_global_singular_values_from_rpca <- NULL
     }
     current_pass_results$rpca_components <- rpca_components
-    current_pass_results$spike_TR_mask <- current_spike_TR_mask # Store updated/current mask
+    current_pass_results$spike_TR_mask <- current_spike_TR_mask 
 
     # --- 4. Spectral Nuisance Components (NDX-5 / NDX-14) ---
     # For Sprint 2 NDX-14, selection will be BIC/AIC based.
@@ -383,8 +390,7 @@ NDX_Process_Subject <- function(Y_fmri,
         if (verbose) message(sprintf("  Pass %d Rho Noise Projection: NA (no nuisance components or residuals)", pass_num))
     }
     
-    # Add other diagnostics: lambda_parallel used etc. (placeholder for NDX-16)
-    # pass_diagnostics$lambda_parallel <- current_pass_results$lambda_parallel_used 
+    pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
 
     diagnostics_per_pass[[pass_num]] <- pass_diagnostics
     

@@ -33,12 +33,16 @@ components to be returned (columns in the output matrix).}
   `1/sqrt(max(dim(Er_t)))`. If FALSE, use `rpca_lambda_fixed`.
 - `rpca_lambda_fixed` (numeric): Fixed lambda value if `rpca_lambda_auto` is FALSE.
 - `rpca_merge_strategy` (character): Strategy for merging voxel-space components.
-  Options are "concat_svd" or "iterative". Default: "concat_svd".}
+  Options are "concat_svd" or "iterative". Default: "concat_svd".
+- `rpca_spike_mad_thresh` (numeric): MAD multiplier for spike detection. Default: 3.0.
+- `rpca_spike_percentile_thresh` (numeric): Percentile threshold if MAD is tiny. Default: 0.98.}
 }
 \value{
 A list with elements:
   - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
+  - `S_matrix_cat`: Matrix of concatenated S_r matrices (total_timepoints x voxels).
+  - `V_global_singular_values`: Singular values from V_global if using concat_svd strategy.
   Returns NULL if errors occur or no components generated.
 }
 \description{

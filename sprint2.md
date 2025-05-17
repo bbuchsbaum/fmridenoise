@@ -100,13 +100,13 @@ This sprint transitions ND-X from a single-pass system to its full iterative, se
 [X] 4. **NDX-14: [Spectral] Implement BIC/AIC Selection for Spectral Sines**
 * Implement `Select_Significant_Spectral_Regressors` using `ΔBIC` (or AIC) to prune candidate spectral sines, as specified.
 * Update the Spectral module (NDX-5) to use this selection logic.
-[ ] 5. **NDX-15: [Spikes-S] Implement Handling of Sparse Component `S` from RPCA**
-* After RPCA, extract the `S` matrix.
-* Implement `S_t_*` calculation (median absolute value across voxels per TR) to generate `spike_TR_mask` (global TR flag).
-* Implement `S_t,v` based precision reweighting:
-    * Option 1: Modify the input to AR(2) estimation (e.g., by down-weighting glitchy TRs/voxels in the residual variance estimate).
-    * Option 2: Use it to create a voxel-time weight map that modifies the objective function of the Anisotropic Ridge (more complex).
-    * Sprint 2 focus: Implement `spike_TR_mask` and ensure it's used in `NDx_FusedFIR`'s `w_TR`. Start exploring how `S_t,v` can influence precision for the ridge. (Note: Include an early abort if `sum(abs(S))==0` to skip mask generation.)
+[X] 5. **NDX-15: [Spikes-S] Implement Handling of Sparse Component `S` from RPCA**
+* After RPCA, extract the `S` matrix. (Done in `ndx_rpca_temporal_components_multirun`)
+* Implement `S_t_*` calculation (median absolute value across voxels per TR) to generate `spike_TR_mask` (global TR flag). (Implemented in `ndx_rpca_temporal_components_multirun`)
+* Sprint 2 focus: Implement `spike_TR_mask` and ensure it's used in `NDx_FusedFIR`'s `w_TR`. (Mask generated and pipeline uses it for HRF estimation via `current_spike_TR_mask`)
+* Start exploring how `S_t,v` can influence precision for the ridge. (Exploratory)
+* (Note: Include an early abort if `sum(abs(S))==0` to skip mask generation.) (Implemented per run)
+* (Follow-up: `ndx_rpca_temporal_components_multirun` should also return `V_global_singular_values` for NDX-13 and optionally `S_matrix_cat` for diagnostics/future use.)
 [ ] 6. **NDX-16: [AnisoRidge] Implement Full Anisotropic Ridge Regression**
 * Refactor the basic ridge (NDX-7) to `ndx_solve_anisotropic_ridge`.
 * Implement creation of projection matrices: `P_GD`, `P_Unique` (if Annihilation Mode), `P_Noise` (if not Annihilation Mode), and `P_Signal`.

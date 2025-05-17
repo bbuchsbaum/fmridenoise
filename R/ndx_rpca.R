@@ -32,6 +32,8 @@
 #' @return A list with elements:
 #'   - `C_components`: Matrix of concatenated temporal nuisance components (total_timepoints x k_global_target).
 #'   - `spike_TR_mask`: Logical vector (length total_timepoints) flagging TRs with non-zero sparse activity.
+#'   - `S_matrix_cat`: Matrix of concatenated S_r matrices (total_timepoints x voxels).
+#'   - `V_global_singular_values`: Singular values from V_global if using concat_svd strategy.
 #'   Returns NULL if errors occur or no components generated.
 #' @examples
 #' \dontrun{
@@ -140,6 +142,8 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   names(glitch_ratios_per_run) <- names(Y_residuals_list)
   per_run_spike_TR_masks <- vector("list", length(Y_residuals_list))
   names(per_run_spike_TR_masks) <- names(Y_residuals_list)
+  S_matrix_list_per_run_TpV <- list() # To store S_r (Time x Voxels) for each run
+  V_global_singular_values <- NULL # To store singular values for rank adaptation
 
   message(sprintf("Starting per-run RPCA for %d runs...", length(Y_residuals_list)))
   for (r_idx in seq_along(Y_residuals_list)) {
@@ -306,6 +310,13 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
     } else {
       per_run_spike_TR_masks[[run_name]] <- rep(FALSE, nrow(Er))
     }
+
+    # After S_r_t <- rpca_res_r$S and L_r_t <- rpca_res_r$L
+    if (!is.null(S_r_t)) {
+        S_matrix_list_per_run_TpV[[run_name]] <- t(S_r_t) # Transpose S_r_t (Voxels x Time_r) to Time_r x Voxels
+    } else {
+        S_matrix_list_per_run_TpV[[run_name]] <- matrix(0, nrow = nrow(Er), ncol = ncol(Er)) # Placeholder if S is NULL
+    }
   } # End per-run RPCA loop
   
   # Filter out NULLs from V_list (runs that failed RPCA)
@@ -367,6 +378,25 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
     V_global <- svd_V_all$u 
     k_actual_global_components <- ncol(V_global)
     message(sprintf("  V_global (concat_svd) obtained with %d components.", k_actual_global_components))
+
+    # IF using concat_svd strategy, capture singular values:
+    if (current_opts$rpca_merge_strategy == "concat_svd" && !is.null(svd_V_all)) {
+      V_global_singular_values <- svd_V_all$d
+    } else if (current_opts$rpca_merge_strategy == "iterative" && !is.null(V_global)) {
+      # For iterative, a representative set of singular values would be harder to get simply.
+      # One option: SVD the final V_global (which should be orthonormal) against itself to get values if meaningful,
+      # or acknowledge that direct singular values for adaptation are best from concat_svd method.
+      # For now, leave NULL if iterative, or compute SVD of final V_global if it makes sense.
+      # Placeholder: if needed, svd(V_global)$d - but V_global cols are already principal components.
+      # The singular values needed are from the matrix whose rank is being adapted.
+      # This is usually the L component or the data matrix itself before RPCA.
+      # The current Auto_Adapt_RPCA_Rank in workflow uses SVD of Y_residuals_current (placeholder).
+      # For true adaptation, this function should output singular values from the L components before merging, or from merged V_all_concat.
+      # For now, only populate from concat_svd strategy.
+      if (verbose && current_opts$rpca_merge_strategy == "iterative") {
+          message("Singular values for rank adaptation not directly available from iterative merge strategy in this function.")
+      }
+    }
   } else {
     stop(sprintf("Invalid rpca_merge_strategy: '%s'. Choose 'concat_svd' or 'iterative'.", current_opts$rpca_merge_strategy))
   }
@@ -401,22 +431,29 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
       return(NULL)
   }
   
-  # --- 5. Glitch Ratio Summary --- 
-  message("Per-run Glitch Ratios (Energy_S / Energy_L from RPCA on Er_t):")
-  print(glitch_ratios_per_run[!is.na(glitch_ratios_per_run)])
-  message(sprintf("Mean Glitch Ratio across valid runs: %.3f", mean(glitch_ratios_per_run, na.rm=TRUE)))
-  
+  # --- Concatenate S_matrix per run ---
+  S_matrix_cat <- do.call(rbind, S_matrix_list_per_run_TpV[paste0("run_", unique_runs)])
+  if (is.null(S_matrix_cat) || nrow(S_matrix_cat) != nrow(Y_residuals_cat) || ncol(S_matrix_cat) != ncol(Y_residuals_cat)) {
+      warning("Concatenated S_matrix dimensions are incorrect or matrix is NULL. Returning NULL for S_matrix.")
+      S_matrix_cat <- NULL # Ensure it's NULL if problematic
+  }
+
   # Combine spike masks in original run order
   spike_TR_mask <- unlist(per_run_spike_TR_masks[paste0("run_", unique_runs)], use.names = FALSE)
-  if (is.null(spike_TR_mask)) {
+  if (is.null(spike_TR_mask) || length(spike_TR_mask) != nrow(Y_residuals_cat)) {
+    warning(sprintf("Global spike_TR_mask length (%d) mismatch with total timepoints (%d). Defaulting to all FALSE.", 
+                    length(spike_TR_mask %||% 0), nrow(Y_residuals_cat)))
     spike_TR_mask <- rep(FALSE, nrow(Y_residuals_cat))
   } else {
     spike_TR_mask <- as.logical(spike_TR_mask)
   }
 
-  message(sprintf("Multi-run RPCA: Returning %d concatenated temporal components.", ncol(C_components_cat)))
+  message(sprintf("Multi-run RPCA: Returning %d concatenated temporal components.", ncol(C_components_cat %||% matrix(ncol=0))))
   return(list(C_components = C_components_cat,
-              spike_TR_mask = spike_TR_mask))
+              spike_TR_mask = spike_TR_mask,
+              S_matrix_cat = S_matrix_cat,
+              V_global_singular_values = V_global_singular_values
+              ))
 }
 
 #' Iterative Grassmann Averaging of Voxel-Space Components
