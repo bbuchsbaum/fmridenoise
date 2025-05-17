@@ -402,15 +402,17 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
 validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, spike_TR_mask, user_options) {
   if (missing(user_options)) stop("user_options are required for HRF estimation.")
   
-  default_opts <- list(return_full_model = FALSE) # Add other defaults if any arise
+  default_opts <- list(
+    hrf_fir_taps = 12L,
+    hrf_fir_span_seconds = 24,
+    good_voxel_R2_threshold = 0.05,
+    cv_folds = 5L,
+    lambda1_grid = 10^seq(-2, 1, length.out = 5),
+    lambda2_grid = 10^seq(-3, 0, length.out = 5),
+    hrf_min_good_voxels = 50L,
+    return_full_model = FALSE
+  )
   user_options <- utils::modifyList(default_opts, user_options)
-
-  expected_opts_names <- c("hrf_fir_taps", "hrf_fir_span_seconds", "good_voxel_R2_threshold",
-                           "cv_folds", "lambda1_grid", "lambda2_grid", "hrf_min_good_voxels", "return_full_model")
-  if(!all(expected_opts_names %in% names(user_options))) {
-    stop(paste("Missing one or more user_options for HRF estimation:", 
-               paste(expected_opts_names[!expected_opts_names %in% names(user_options)], collapse=", ")))
-  }
 
   if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) stop("Y_fmri must be a numeric matrix.")
   n_timepoints <- nrow(Y_fmri)
