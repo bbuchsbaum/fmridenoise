@@ -52,9 +52,21 @@ ndx_run_sprint1 <- function(Y_fmri,
   # --- 0. Validate inputs and merge default user_options --- 
   # (To be implemented: validate inputs, set up default options for each sub-module if not provided)
   
-  # Placeholder for options - real implementation would merge with defaults
+  # Default options for HRF estimation
   opts_pass0       <- user_options$opts_pass0 %||% list()
-  opts_hrf         <- user_options$opts_hrf %||% list()
+
+  default_opts_hrf <- list(
+    hrf_fir_taps = 12L,
+    hrf_fir_span_seconds = 24,
+    good_voxel_R2_threshold = 0.05,
+    cv_folds = 5L,
+    lambda1_grid = 10^seq(-2, 1, length.out = 5),
+    lambda2_grid = 10^seq(-3, 0, length.out = 5),
+    hrf_min_good_voxels = 50L,
+    return_full_model = FALSE
+  )
+  opts_hrf <- utils::modifyList(default_opts_hrf, user_options$opts_hrf %||% list())
+
   opts_rpca        <- user_options$opts_rpca %||% list()
   opts_spectral    <- user_options$opts_spectral %||% list()
   opts_whitening   <- user_options$opts_whitening %||% list()
