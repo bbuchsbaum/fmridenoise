@@ -206,3 +206,33 @@ test_that("calculate_R2_voxelwise handles all-NA columns and extra NA residuals"
   expect_equal(r2_vals[1], expected_r2_col1, tolerance = 1e-9)
   expect_equal(r2_vals[2], 0)
 })
+
+test_that("calculate_DES computes expected score and handles edge cases", {
+  set.seed(123)
+  baseline_res <- rnorm(100, sd = 2)
+  var_baseline <- var(baseline_res)
+  current_res <- rnorm(100, sd = 1)
+
+  expected <- 1 - var(current_res) / var_baseline
+  expect_equal(calculate_DES(current_res, var_baseline), expected, tolerance = 1e-8)
+
+  expect_true(is.na(calculate_DES(current_res, 0)))
+  expect_true(is.na(calculate_DES(current_res, NA_real_)))
+})
+
+test_that("ndx_orthogonalize_matrix_against_basis orthogonalizes correctly", {
+  set.seed(42)
+  basis <- matrix(rnorm(40), 10, 4)
+  target <- matrix(rnorm(30), 10, 3)
+  ortho <- ndx_orthogonalize_matrix_against_basis(target, basis)
+
+  expect_equal(dim(ortho), dim(target))
+  cross_val <- t(ortho) %*% basis
+  expect_true(all(abs(cross_val) < 1e-8))
+})
+
+test_that("ndx_orthogonalize_matrix_against_basis handles empty basis", {
+  target <- matrix(rnorm(12), 4, 3)
+  expect_equal(ndx_orthogonalize_matrix_against_basis(target, NULL), target)
+  expect_equal(ndx_orthogonalize_matrix_against_basis(target, matrix(numeric(0), nrow = 4)), target)
+})
