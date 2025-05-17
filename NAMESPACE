@@ -2,6 +2,8 @@
 
 export(Auto_Adapt_RPCA_Rank)
 export(NDX_Process_Subject)
+export(merge_lists)
+export(`%||%`)
 export(Select_Significant_Spectral_Regressors)
 export(calculate_DES)
 export(calculate_R2_voxelwise)
