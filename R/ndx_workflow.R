@@ -86,27 +86,85 @@ NDX_Process_Subject <- function(Y_fmri,
   opts_rpca        <- user_options$opts_rpca %||% list()
   opts_spectral    <- user_options$opts_spectral %||% list()
   opts_whitening   <- user_options$opts_whitening %||% list()
-  opts_ridge       <- user_options$opts_ridge %||% list()
+  # opts_ridge       <- user_options$opts_ridge %||% list() # This was the old line
+  # Default options for ridge, now more comprehensive for anisotropic and annihilation
+  default_opts_ridge <- list(
+    lambda_ridge = 1.0, # Isotropic lambda, for fallback or if anisotropic_ridge_enable=FALSE
+    anisotropic_ridge_enable = TRUE,
+    lambda_signal = 0.1, 
+    lambda_noise_rpca = 1.0, 
+    lambda_noise_spectral = 1.0,
+    lambda_noise_other = 1.0,
+    ridge_gcv_folds = 5L,
+    ridge_update_lambda_aggressiveness = FALSE,
+    # Lambdas for annihilation mode components - these are now part of the main ridge options
+    lambda_noise_gdlite = 1.0, 
+    lambda_noise_ndx_unique = 1.0 
+  )
+  opts_ridge <- utils::modifyList(default_opts_ridge, user_options$opts_ridge %||% list())
+
+  # Default options for Annihilation mode (controls call to ndx_run_gdlite)
+  default_opts_annihilation <- list(
+    annihilation_enable_mode = FALSE,
+    annihilation_gdlite_poly_degree = 1,
+    annihilation_gdlite_k_max = 30L,
+    annihilation_gdlite_r2_thresh_noise_pool = 0.05,
+    annihilation_gdlite_tsnr_thresh_noise_pool = 30,
+    annihilation_gdlite_r2_thresh_good_voxels = 0.05
+  )
+  opts_annihilation <- utils::modifyList(default_opts_annihilation, user_options$opts_annihilation %||% list())
+
   task_regressor_names <- user_options$task_regressor_names_for_extraction %||% character(0)
+  verbose_workflow <- user_options$verbose %||% TRUE # Use a distinct name for workflow verbosity
 
   # Initialize storage for per-pass results
   diagnostics_per_pass <- list()
   beta_history_per_pass <- list()
   Y_residuals_current <- NULL # Will hold residuals from the previous pass
   VAR_BASELINE_FOR_DES <- NULL # From initial GLM
-  current_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
-  pass0_residuals <- NULL
-  
-  # Default options for sub-modules 
-  default_opts_ridge <- list(
-    lambda_ridge = 1.0, # Old isotropic lambda, keep for now if anisotropic is conditional
-    # New options for anisotropic ridge (NDX-16)
-    anisotropic_ridge_enable = TRUE, # Control whether to use new anisotropic path
-    lambda_parallel_noise = 10.0,  # Penalty for ND-X nuisance (RPCA, Spectral)
-    lambda_perp_signal = 0.1,    # Penalty for signal-related/other regressors
-    lambda_gcv = FALSE # Placeholder for GCV tuning later
-  )
-  opts_ridge <- utils::modifyList(default_opts_ridge, user_options$opts_ridge %||% list())
+  current_overall_spike_TR_mask <- if (is.null(spike_TR_mask)) rep(FALSE, nrow(Y_fmri)) else as.logical(spike_TR_mask)
+  # Placeholder for fixed GD-Lite PCs if Annihilation Mode is active
+  U_GD_Lite_fixed_PCs <- NULL
+  gdlite_initial_results <- NULL # To store full gdlite output if needed for diagnostics
+
+  # --- Call ndx_run_gdlite if Annihilation Mode is enabled (once before the loop) ---
+  if (opts_annihilation$annihilation_enable_mode) {
+    if (verbose_workflow) message("Annihilation Mode enabled: Running GLMdenoise-Lite procedure upfront...")
+    
+    # Set verbose option for gdlite functions if main workflow verbose is on
+    # This assumes gdlite functions use getOption("fmridenoise.verbose_gdlite", FALSE)
+    original_gdlite_verbose_opt <- getOption("fmridenoise.verbose_gdlite")
+    if (verbose_workflow) {
+        options(fmridenoise.verbose_gdlite = TRUE)
+    } else {
+        options(fmridenoise.verbose_gdlite = FALSE)
+    }
+
+    gdlite_initial_results <- ndx_run_gdlite(
+      Y_fmri = Y_fmri,
+      events = events,
+      run_idx = run_idx,
+      TR = TR,
+      motion_params = motion_params, # Pass original motion params
+      poly_degree = opts_annihilation$annihilation_gdlite_poly_degree,
+      k_max = opts_annihilation$annihilation_gdlite_k_max,
+      r2_thresh_noise_pool = opts_annihilation$annihilation_gdlite_r2_thresh_noise_pool,
+      tsnr_thresh_noise_pool = opts_annihilation$annihilation_gdlite_tsnr_thresh_noise_pool,
+      r2_thresh_good_voxels = opts_annihilation$annihilation_gdlite_r2_thresh_good_voxels,
+      perform_final_glm = FALSE # We only need the PCs for now
+    )
+    
+    # Restore original gdlite verbose option
+    options(fmridenoise.verbose_gdlite = original_gdlite_verbose_opt)
+
+    if (!is.null(gdlite_initial_results) && !is.null(gdlite_initial_results$selected_pcs) && ncol(gdlite_initial_results$selected_pcs) > 0) {
+      U_GD_Lite_fixed_PCs <- gdlite_initial_results$selected_pcs
+      if (verbose_workflow) message(sprintf("  GLMdenoise-Lite selected %d PCs. These will be used as a fixed basis.", ncol(U_GD_Lite_fixed_PCs)))
+    } else {
+      if (verbose_workflow) message("  GLMdenoise-Lite did not select any PCs or failed. Annihilation mode will effectively be standard ND-X.")
+      U_GD_Lite_fixed_PCs <- NULL # Ensure it's NULL if no PCs
+    }
+  } # End of upfront ndx_run_gdlite call
 
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
@@ -148,7 +206,7 @@ NDX_Process_Subject <- function(Y_fmri,
       events = events, 
       run_idx = run_idx, 
       TR = TR, 
-      spike_TR_mask = current_spike_TR_mask, 
+      spike_TR_mask = current_overall_spike_TR_mask, 
       user_options = opts_hrf
     )
     current_pass_results$estimated_hrfs_per_cluster <- estimated_hrfs_raw # Store for diagnostics
@@ -235,8 +293,8 @@ NDX_Process_Subject <- function(Y_fmri,
     if (!is.null(rpca_out) && is.list(rpca_out)) {
       rpca_components <- rpca_out$C_components 
       if (!is.null(rpca_out$spike_TR_mask) && is.logical(rpca_out$spike_TR_mask) && 
-          length(rpca_out$spike_TR_mask) == length(current_spike_TR_mask)) {
-        current_spike_TR_mask <- current_spike_TR_mask | rpca_out$spike_TR_mask 
+          length(rpca_out$spike_TR_mask) == length(current_overall_spike_TR_mask)) {
+        current_overall_spike_TR_mask <- current_overall_spike_TR_mask | rpca_out$spike_TR_mask 
       } else if (!is.null(rpca_out$spike_TR_mask) && verbose) {
         message("    Warning: spike_TR_mask from rpca_out is not a valid logical vector of correct length. Global spike mask not updated by this pass's RPCA.")
       }
@@ -253,7 +311,7 @@ NDX_Process_Subject <- function(Y_fmri,
       current_pass_results$V_global_singular_values_from_rpca <- NULL
     }
     current_pass_results$rpca_components <- rpca_components
-    current_pass_results$spike_TR_mask <- current_spike_TR_mask 
+    current_pass_results$spike_TR_mask <- current_overall_spike_TR_mask 
 
     # --- 4. Spectral Nuisance Components (NDX-5 / NDX-14) ---
     # For Sprint 2 NDX-14, selection will be BIC/AIC based.
@@ -277,17 +335,75 @@ NDX_Process_Subject <- function(Y_fmri,
 
     # --- 5. Construct Full Design Matrix (using ndx_build_design_matrix) --- 
     if (verbose) message(sprintf("Pass %d: Constructing full design matrix...", pass_num))
-    X_full_design <- ndx_build_design_matrix(
-      estimated_hrfs = current_pass_results$estimated_hrfs,
-      events = events,
-      motion_params = motion_params, # Original motion params are part of the base model always
-      rpca_components = current_pass_results$rpca_components, # From current pass
-      spectral_sines = current_pass_results$spectral_sines,   # From current pass
-      run_idx = run_idx,
-      TR = TR,
-      poly_degree = opts_pass0$poly_degree, # From initial GLM setup
-      verbose = FALSE # Reduce verbosity for internal calls
-    )
+    
+    # If in Annihilation Mode, need to handle the special orthogonalized components
+    if (opts_annihilation$annihilation_enable_mode && !is.null(U_GD_Lite_fixed_PCs) && 
+        ncol(U_GD_Lite_fixed_PCs) > 0) {
+        
+        # Standard components for base design
+        X_full_design <- ndx_build_design_matrix(
+          estimated_hrfs = current_pass_results$estimated_hrfs,
+          events = events,
+          motion_params = motion_params, # Original motion params are part of the base model always
+          rpca_components = NULL,  # We'll add them separately with different prefixes
+          spectral_sines = NULL,   # We'll add them separately with different prefixes
+          run_idx = run_idx,
+          TR = TR,
+          poly_degree = opts_pass0$poly_degree, # From initial GLM setup
+          verbose = FALSE # Reduce verbosity for internal calls
+        )
+        
+        # Now handle the special components for Annihilation Mode
+        if (!is.null(X_full_design)) {
+            # Add GLMdenoise PCs with prefix 'gdlite_pc_'
+            if (ncol(U_GD_Lite_fixed_PCs) > 0) {
+                gdlite_pcols <- ncol(U_GD_Lite_fixed_PCs)
+                colnames_gdlite <- paste0("gdlite_pc_", seq_len(gdlite_pcols))
+                X_gdlite <- U_GD_Lite_fixed_PCs
+                colnames(X_gdlite) <- colnames_gdlite
+                X_full_design <- cbind(X_full_design, X_gdlite)
+                if (verbose) message(sprintf("    Added %d GLMdenoise PCs to design matrix.", gdlite_pcols))
+            }
+            
+            # Add orthogonalized RPCA components if they exist
+            if (!is.null(U_NDX_Nuisance_Combined_list$rpca_unique) && 
+                ncol(U_NDX_Nuisance_Combined_list$rpca_unique) > 0) {
+                
+                rpca_unique_pcols <- ncol(U_NDX_Nuisance_Combined_list$rpca_unique)
+                colnames_rpca_unique <- paste0("rpca_unique_comp_", seq_len(rpca_unique_pcols))
+                X_rpca_unique <- U_NDX_Nuisance_Combined_list$rpca_unique
+                colnames(X_rpca_unique) <- colnames_rpca_unique
+                X_full_design <- cbind(X_full_design, X_rpca_unique)
+                if (verbose) message(sprintf("    Added %d orthogonalized RPCA components to design matrix.", rpca_unique_pcols))
+            }
+            
+            # Add orthogonalized spectral components if they exist
+            if (!is.null(U_NDX_Nuisance_Combined_list$spectral_unique) && 
+                ncol(U_NDX_Nuisance_Combined_list$spectral_unique) > 0) {
+                
+                spectral_unique_pcols <- ncol(U_NDX_Nuisance_Combined_list$spectral_unique)
+                colnames_spectral_unique <- paste0("spectral_unique_comp_", seq_len(spectral_unique_pcols))
+                X_spectral_unique <- U_NDX_Nuisance_Combined_list$spectral_unique
+                colnames(X_spectral_unique) <- colnames_spectral_unique
+                X_full_design <- cbind(X_full_design, X_spectral_unique)
+                if (verbose) message(sprintf("    Added %d orthogonalized spectral components to design matrix.", spectral_unique_pcols))
+            }
+        }
+    } else {
+        # Standard design matrix construction (non-Annihilation Mode)
+        X_full_design <- ndx_build_design_matrix(
+          estimated_hrfs = current_pass_results$estimated_hrfs,
+          events = events,
+          motion_params = motion_params, # Original motion params are part of the base model always
+          rpca_components = current_pass_results$rpca_components, # From current pass
+          spectral_sines = current_pass_results$spectral_sines,   # From current pass
+          run_idx = run_idx,
+          TR = TR,
+          poly_degree = opts_pass0$poly_degree, # From initial GLM setup
+          verbose = FALSE # Reduce verbosity for internal calls
+        )
+    }
+    
     current_pass_results$X_full_design <- X_full_design
     
     # --- 6. AR(2) Pre-whitening (NDX-6) ---
@@ -336,14 +452,58 @@ NDX_Process_Subject <- function(Y_fmri,
           # These patterns should match what ndx_build_design_matrix creates
           is_rpca_col <- grepl("^rpca_comp_", regressor_names)
           is_spectral_col <- grepl("^(sin_f|cos_f|spectral_comp_)", regressor_names)
-          noise_col_indices <- which(is_rpca_col | is_spectral_col)
+          is_gdlite_col <- grepl("^gdlite_pc_", regressor_names)  # For Annihilation Mode
           
-          if (length(noise_col_indices) > 0) {
-            K_penalty_diag[noise_col_indices] <- opts_ridge$lambda_parallel_noise %||% 10.0
-            if (verbose) message(sprintf("    Applied lambda_parallel_noise=%.2f to %d RPCA/Spectral columns.", 
-                                       opts_ridge$lambda_parallel_noise %||% 10.0, length(noise_col_indices)))
+          # Special handling for orthogonalized components in Annihilation Mode
+          is_rpca_unique_col <- grepl("^rpca_unique_comp_", regressor_names)
+          is_spectral_unique_col <- grepl("^spectral_unique_comp_", regressor_names)
+          
+          # Identify appropriate lambda for each regressor type
+          noise_rpca_col_indices <- which(is_rpca_col)
+          noise_spectral_col_indices <- which(is_spectral_col)
+          noise_gdlite_col_indices <- which(is_gdlite_col)
+          noise_rpca_unique_col_indices <- which(is_rpca_unique_col)
+          noise_spectral_unique_col_indices <- which(is_spectral_unique_col)
+          
+          # Standard non-annihilation mode lambdas for RPCA and spectral
+          if (length(noise_rpca_col_indices) > 0) {
+            K_penalty_diag[noise_rpca_col_indices] <- opts_ridge$lambda_noise_rpca %||% opts_ridge$lambda_parallel_noise %||% 10.0
+          }
+          
+          if (length(noise_spectral_col_indices) > 0) {
+            K_penalty_diag[noise_spectral_col_indices] <- opts_ridge$lambda_noise_spectral %||% opts_ridge$lambda_parallel_noise %||% 10.0
+          }
+          
+          # Annihilation Mode specific lambdas
+          if (opts_annihilation$annihilation_enable_mode) {
+            if (length(noise_gdlite_col_indices) > 0) {
+              K_penalty_diag[noise_gdlite_col_indices] <- opts_ridge$lambda_noise_gdlite %||% 1.0
+              if (verbose) message(sprintf("    Applied lambda_noise_gdlite=%.2f to %d GLMdenoise PC columns.", 
+                                         opts_ridge$lambda_noise_gdlite %||% 1.0, length(noise_gdlite_col_indices)))
+            }
+            
+            if (length(noise_rpca_unique_col_indices) > 0) {
+              K_penalty_diag[noise_rpca_unique_col_indices] <- opts_ridge$lambda_noise_ndx_unique %||% 1.0
+              if (verbose) message(sprintf("    Applied lambda_noise_ndx_unique=%.2f to %d orthogonalized RPCA columns.", 
+                                         opts_ridge$lambda_noise_ndx_unique %||% 1.0, length(noise_rpca_unique_col_indices)))
+            }
+            
+            if (length(noise_spectral_unique_col_indices) > 0) {
+              K_penalty_diag[noise_spectral_unique_col_indices] <- opts_ridge$lambda_noise_ndx_unique %||% 1.0
+              if (verbose) message(sprintf("    Applied lambda_noise_ndx_unique=%.2f to %d orthogonalized spectral columns.", 
+                                         opts_ridge$lambda_noise_ndx_unique %||% 1.0, length(noise_spectral_unique_col_indices)))
+            }
+          }
+          
+          # For non-annihilation mode or if specific columns weren't found, apply default lambda
+          standard_noise_cols <- c(noise_rpca_col_indices, noise_spectral_col_indices, 
+                                 noise_gdlite_col_indices, noise_rpca_unique_col_indices, 
+                                 noise_spectral_unique_col_indices)
+          
+          if (length(standard_noise_cols) > 0) {
+            if (verbose) message(sprintf("    Applied appropriate lambdas to %d total noise columns.", length(standard_noise_cols)))
           } else {
-            if (verbose) message("    No specific RPCA/Spectral columns found for anisotropic penalty; all regressors use lambda_perp_signal.")
+            if (verbose) message("    No specific noise columns found for anisotropic penalty; all regressors use lambda_perp_signal.")
           }
         } else {
           if (verbose) message("    Colnames for X_whitened not available, using isotropic penalty with lambda_perp_signal for all.")
@@ -419,6 +579,38 @@ NDX_Process_Subject <- function(Y_fmri,
         U_NDX_Nuisance_Combined_list$spectral <- current_pass_results$spectral_sines
     }
     
+    # For Annihilation Mode: Orthogonalize NDX components against GLMdenoise PCs if available
+    if (opts_annihilation$annihilation_enable_mode && !is.null(U_GD_Lite_fixed_PCs) && 
+        ncol(U_GD_Lite_fixed_PCs) > 0 && length(U_NDX_Nuisance_Combined_list) > 0) {
+        
+        if (verbose_workflow) message("  Annihilation Mode: Orthogonalizing NDX nuisance components against GLMdenoise-Lite PCs...")
+        
+        # Orthogonalize each type of NDX component (RPCA, Spectral, etc.)
+        if (!is.null(U_NDX_Nuisance_Combined_list$rpca) && ncol(U_NDX_Nuisance_Combined_list$rpca) > 0) {
+            U_NDX_Nuisance_Combined_list$rpca_unique <- ndx_orthogonalize_matrix_against_basis(
+                U_NDX_Nuisance_Combined_list$rpca, U_GD_Lite_fixed_PCs)
+            U_NDX_Nuisance_Combined_list$rpca <- NULL # Remove original RPCA components
+            if (verbose_workflow) message(sprintf("    Orthogonalized %d RPCA components", 
+                                               ncol(U_NDX_Nuisance_Combined_list$rpca_unique)))
+        }
+        
+        if (!is.null(U_NDX_Nuisance_Combined_list$spectral) && ncol(U_NDX_Nuisance_Combined_list$spectral) > 0) {
+            U_NDX_Nuisance_Combined_list$spectral_unique <- ndx_orthogonalize_matrix_against_basis(
+                U_NDX_Nuisance_Combined_list$spectral, U_GD_Lite_fixed_PCs)
+            U_NDX_Nuisance_Combined_list$spectral <- NULL # Remove original spectral components
+            if (verbose_workflow) message(sprintf("    Orthogonalized %d spectral components", 
+                                               ncol(U_NDX_Nuisance_Combined_list$spectral_unique)))
+        }
+        
+        # Add the fixed GLMdenoise PCs to the combined nuisance list
+        U_NDX_Nuisance_Combined_list$gdlite <- U_GD_Lite_fixed_PCs
+        if (verbose_workflow) message(sprintf("    Added %d GLMdenoise-Lite PCs to nuisance set", 
+                                           ncol(U_GD_Lite_fixed_PCs)))
+        
+        # Update diagnostic to indicate annihilation was active this pass
+        diagnostics_per_pass[[pass_num]]$pass_options$annihilation_active_this_pass <- TRUE
+    }
+    
     if (length(U_NDX_Nuisance_Combined_list) > 0 && !is.null(Y_residuals_current)) {
         U_NDX_Nuisance_Combined <- do.call(cbind, U_NDX_Nuisance_Combined_list)
         if (ncol(U_NDX_Nuisance_Combined) > 0) {
@@ -436,6 +628,9 @@ NDX_Process_Subject <- function(Y_fmri,
             pass_diagnostics$rho_noise_projection <- 0 # No nuisance components to project onto
             if (verbose) message(sprintf("  Pass %d Rho Noise Projection: 0 (no combined nuisance components)", pass_num))
         }
+        
+        # Store the latest nuisance components list for final output
+        current_pass_results$U_NDX_Nuisance_Combined_list <- U_NDX_Nuisance_Combined_list
     } else {
         pass_diagnostics$rho_noise_projection <- NA # Cannot calculate if no nuisance or no residuals
         if (verbose) message(sprintf("  Pass %d Rho Noise Projection: NA (no nuisance components or residuals)", pass_num))
@@ -447,6 +642,14 @@ NDX_Process_Subject <- function(Y_fmri,
     pass_diagnostics$lambda_perp_signal <- current_pass_results$lambda_perp_signal
     
     pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
+
+    # Store options used for this pass if they can change adaptively or for reference
+    diagnostics_per_pass[[pass_num]]$pass_options <- list(
+      current_rpca_k_target = k_rpca_global,
+      current_rpca_lambda = current_opts_rpca$rpca_lambda_fixed %||% current_opts_rpca$rpca_lambda_auto,
+      # TODO: store spectral selection details, HRF clustering details etc.
+      annihilation_active_this_pass = FALSE # Default, update if active
+    )
 
     diagnostics_per_pass[[pass_num]] <- pass_diagnostics
     
@@ -516,12 +719,38 @@ NDX_Process_Subject <- function(Y_fmri,
      pass0_vars = VAR_BASELINE_FOR_DES, # Original baseline variance
      pass0_residuals = pass0_residuals,
      na_mask_whitening = current_pass_results$na_mask_whitening,
-     spike_TR_mask = current_spike_TR_mask,
+     spike_TR_mask = current_overall_spike_TR_mask,
      X_full_design_final = current_pass_results$X_full_design, # From last pass
      diagnostics_per_pass = diagnostics_per_pass,
      beta_history_per_pass = beta_history_per_pass,
      num_passes_completed = pass_num
   )
+  
+  # Add Annihilation Mode specific results if active
+  if (opts_annihilation$annihilation_enable_mode) {
+    final_results$annihilation_mode_active <- TRUE
+    final_results$gdlite_pcs <- U_GD_Lite_fixed_PCs
+    
+    # Add any orthogonalized components from the last pass
+    if (!is.null(current_pass_results$U_NDX_Nuisance_Combined_list)) {
+      final_results$rpca_orthogonalized <- current_pass_results$U_NDX_Nuisance_Combined_list$rpca_unique
+      final_results$spectral_orthogonalized <- current_pass_results$U_NDX_Nuisance_Combined_list$spectral_unique
+    }
+    
+    # Include GLMdenoise diagnostics
+    if (!is.null(gdlite_initial_results)) {
+      final_results$gdlite_diagnostics <- list(
+        noise_pool_mask = gdlite_initial_results$noise_pool_mask,
+        good_voxels_mask = gdlite_initial_results$good_voxels_mask,
+        tsnr = gdlite_initial_results$tsnr,
+        cv_r2 = gdlite_initial_results$cv_r2,
+        optimal_k = gdlite_initial_results$optimal_k,
+        r2_vals_by_k = gdlite_initial_results$r2_vals_by_k
+      )
+    }
+  } else {
+    final_results$annihilation_mode_active <- FALSE
+  }
   
   if (verbose) message("ND-X Subject Processing finished.")
   return(final_results)
