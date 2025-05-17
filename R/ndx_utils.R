@@ -10,6 +10,7 @@
 #' @import matrixStats
 NULL
 
+
 # Placeholder for actual utility functions
 
 #' Calculate OLS residuals using lm.fit
@@ -21,6 +22,17 @@ NULL
 #' @keywords internal
 #' @export
 calculate_residuals_ols <- function(Y, X) {
+  # Convert inputs to numeric matrices if possible
+  if (!is.matrix(Y)) {
+    Y <- as.matrix(Y)
+  }
+  if (!is.matrix(X)) {
+    X <- as.matrix(X)
+  }
+  if (!is.numeric(Y) || !is.numeric(X)) {
+    stop("`Y` and `X` must be numeric matrices.")
+  }
+
   if (nrow(Y) != nrow(X)) {
     stop("Number of rows in Y and X must match for OLS.")
   }
@@ -109,8 +121,15 @@ calculate_DES <- function(current_residuals_unwhitened, VAR_BASELINE_FOR_DES) {
     warning("calculate_DES: Inputs cannot be NULL.")
     return(NA_real_)
   }
-  if (!is.numeric(current_residuals_unwhitened) || !is.numeric(VAR_BASELINE_FOR_DES)) {
-    warning("calculate_DES: Inputs must be numeric.")
+  if (!is.numeric(current_residuals_unwhitened)) {
+    current_residuals_unwhitened <- as.numeric(current_residuals_unwhitened)
+    if (anyNA(current_residuals_unwhitened)) {
+      warning("calculate_DES: `current_residuals_unwhitened` contains non-numeric values.")
+      return(NA_real_)
+    }
+  }
+  if (!is.numeric(VAR_BASELINE_FOR_DES)) {
+    warning("calculate_DES: `VAR_BASELINE_FOR_DES` must be numeric.")
     return(NA_real_)
   }
   if (length(VAR_BASELINE_FOR_DES) != 1 || !is.finite(VAR_BASELINE_FOR_DES)){
@@ -186,14 +205,20 @@ ndx_orthogonalize_matrix_against_basis <- function(target_matrix, basis_matrix, 
   if (is.null(target_matrix) || ncol(target_matrix) == 0) {
     return(target_matrix)
   }
-  if (!is.matrix(target_matrix) || !is.numeric(target_matrix)){
+  if (!is.matrix(target_matrix)) {
+    target_matrix <- as.matrix(target_matrix)
+  }
+  if (!is.numeric(target_matrix)) {
     stop("`target_matrix` must be a numeric matrix.")
   }
 
   if (is.null(basis_matrix) || ncol(basis_matrix) == 0) {
     return(target_matrix)
   }
-  if (!is.matrix(basis_matrix) || !is.numeric(basis_matrix)){
+  if (!is.matrix(basis_matrix)) {
+    basis_matrix <- as.matrix(basis_matrix)
+  }
+  if (!is.numeric(basis_matrix)) {
     stop("`basis_matrix` must be a numeric matrix.")
   }
 
