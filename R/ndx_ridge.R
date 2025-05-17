@@ -1,3 +1,104 @@
+#' Compute Projection Matrices for Anisotropic Ridge
+#'
+#' Given orthonormal basis matrices describing different nuisance subspaces,
+#' this helper constructs the projection matrices used by anisotropic ridge
+#' regression. Any NULL or empty basis results in a NULL projector.
+#'
+#' @param U_GD Matrix of GLMdenoise PCs (n_regressors x k1). Optional.
+#' @param U_Unique Matrix of nuisance components unique to ND-X (n_regressors x k2). Optional.
+#' @param U_Noise Matrix of nuisance components when not using Annihilation Mode (n_regressors x k3). Optional.
+#' @param n_regressors Integer number of regressors in the design.
+#' @return A list with projection matrices `P_GD`, `P_Unique`, `P_Noise`, and `P_Signal` (the complement).
+#' @export
+ndx_compute_projection_matrices <- function(U_GD = NULL, U_Unique = NULL,
+                                            U_Noise = NULL, n_regressors) {
+  I_reg <- diag(1, n_regressors)
+  make_proj <- function(U) {
+    if (is.null(U) || ncol(U) == 0) return(NULL)
+    Q <- qr.Q(qr(U))
+    Q %*% t(Q)
+  }
+  P_GD <- make_proj(U_GD)
+  P_Unique <- make_proj(U_Unique)
+  P_Noise <- make_proj(U_Noise)
+
+  P_combined <- matrix(0, n_regressors, n_regressors)
+  if (!is.null(P_GD)) P_combined <- P_combined + P_GD
+  if (!is.null(P_Unique)) P_combined <- P_combined + P_Unique
+  if (!is.null(P_Noise)) P_combined <- P_combined + P_Noise
+  P_Signal <- I_reg - P_combined
+
+  list(P_GD = P_GD, P_Unique = P_Unique, P_Noise = P_Noise, P_Signal = P_Signal)
+}
+
+#' Tune Parallel Lambda via Generalized Cross Validation
+#'
+#' Performs a simple GCV search over a grid of lambda_parallel values. The
+#' lambda for the orthogonal complement (`lambda_perp`) is set as
+#' `lambda_ratio * lambda_parallel`.
+#'
+#' @param Y_whitened Numeric matrix of whitened responses.
+#' @param X_whitened Numeric matrix of whitened design.
+#' @param P_Noise Projection matrix onto the noise subspace.
+#' @param lambda_grid Numeric vector of candidate lambda_parallel values.
+#' @param lambda_ratio Numeric multiplier for lambda_perp.
+#' @return Numeric scalar best lambda_parallel from the grid.
+#' @export
+ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
+                                         lambda_grid = 10^seq(-2, 2, length.out = 5),
+                                         lambda_ratio = 0.05) {
+  n <- nrow(X_whitened)
+  I_reg <- diag(1, ncol(X_whitened))
+  P_Signal <- I_reg - P_Noise
+  best_lambda <- lambda_grid[1]
+  best_gcv <- Inf
+  for (lam in lambda_grid) {
+    K_diag <- lam * diag(P_Noise) + (lam * lambda_ratio) * diag(P_Signal)
+    XtX <- crossprod(X_whitened)
+    XtX_pen <- XtX
+    diag(XtX_pen) <- diag(XtX_pen) + pmax(K_diag, .Machine$double.eps)
+    chol_decomp <- tryCatch(chol(XtX_pen), error = function(e) NULL)
+    if (is.null(chol_decomp)) next
+    beta_hat <- chol2inv(chol_decomp) %*% crossprod(X_whitened, Y_whitened)
+    residuals <- Y_whitened - X_whitened %*% beta_hat
+    sse <- sum(residuals^2)
+    S_mat <- X_whitened %*% chol2inv(chol_decomp) %*% t(X_whitened)
+    edf <- sum(diag(S_mat))
+    gcv <- sse / (n - edf)^2
+    if (is.finite(gcv) && gcv < best_gcv) {
+      best_gcv <- gcv
+      best_lambda <- lam
+    }
+  }
+  best_lambda
+}
+
+#' Update Lambda Aggressiveness Based on Rho
+#'
+#' Simple heuristic to adjust lambda_parallel depending on how much residual
+#' variance projects onto the noise subspace.
+#'
+#' @param lambda_parallel Current lambda_parallel value.
+#' @param rho_noise_projection Proportion of residual variance projected onto the noise subspace.
+#' @param high_threshold Increase lambda if rho > this value. Default 0.10.
+#' @param low_threshold Decrease lambda if rho < this value. Default 0.03.
+#' @param increase_factor Multiplicative increase factor. Default 1.25.
+#' @param decrease_factor Multiplicative decrease factor. Default 0.8.
+#' @return Updated lambda_parallel.
+#' @export
+ndx_update_lambda_aggressiveness <- function(lambda_parallel, rho_noise_projection,
+                                             high_threshold = 0.10, low_threshold = 0.03,
+                                             increase_factor = 1.25, decrease_factor = 0.8) {
+  if (is.na(rho_noise_projection)) return(lambda_parallel)
+  if (rho_noise_projection > high_threshold) {
+    lambda_parallel <- lambda_parallel * increase_factor
+  } else if (rho_noise_projection < low_threshold) {
+    lambda_parallel <- lambda_parallel * decrease_factor
+  }
+  lambda_parallel
+}
+
+
 #' Solve Anisotropic Ridge Regression Problem
 #'
 #' Solves for beta coefficients in a ridge regression model: Y = X beta + E,
@@ -10,10 +111,18 @@
 #'   Its length must be equal to `ncol(X_whitened)`.
 #' @param na_mask Optional. A logical vector where TRUE indicates timepoints to exclude.
 #'   If NULL, all timepoints are used.
+#' @param projection_mats Optional list of projection matrices produced by
+#'   `ndx_compute_projection_matrices`. If provided along with `lambda_values`,
+#'   `K_penalty_diag` is constructed automatically.
+#' @param lambda_values Optional list with elements `lambda_parallel`,
+#'   `lambda_perp_signal`, `lambda_gd`, and `lambda_unique` used when
+#'   `K_penalty_diag` is not given.
 #' @return A matrix of estimated beta coefficients (n_regressors x voxels/responses).
 #'   Returns NULL if inputs are invalid or the problem cannot be solved.
 #' @export ndx_solve_anisotropic_ridge
-ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag, na_mask = NULL) {
+ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag = NULL,
+                                        na_mask = NULL, projection_mats = NULL,
+                                        lambda_values = NULL) {
 
   # --- Input Validation ---
   if (is.null(Y_whitened) || is.null(X_whitened)){
@@ -32,13 +141,24 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag, 
     warning("Y_whitened and X_whitened must have the same number of rows (timepoints).")
     return(NULL)
   }
-  if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
-    warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
-    return(NULL)
-  }
-  if (any(K_penalty_diag < 0)) {
-    warning("All elements of K_penalty_diag must be non-negative.")
-    return(NULL)
+  if (!is.null(K_penalty_diag)) {
+    if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
+      warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
+      return(NULL)
+    }
+    if (any(K_penalty_diag < 0)) {
+      warning("All elements of K_penalty_diag must be non-negative.")
+      return(NULL)
+    }
+  } else {
+    if (is.null(projection_mats) || length(lambda_values) == 0) {
+      warning("Either K_penalty_diag or projection_mats and lambda_values must be provided.")
+      return(NULL)
+    }
+    if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
+      warning("projection_mats must contain at least P_Signal.")
+      return(NULL)
+    }
   }
 
   # --- Handle NAs ---
@@ -68,6 +188,28 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag, 
     warning(sprintf("Number of timepoints after NA removal (%d) is less than number of regressors (%d). Ridge solution might be unstable or not meaningful.", 
                     nrow(X_eff), ncol(X_eff)))
     # Proceeding, as ridge can handle p > n
+  }
+
+  if (is.null(K_penalty_diag)) {
+    lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
+    lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
+    lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
+    lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+
+    n_reg <- ncol(X_eff)
+    K_penalty_diag <- rep(0, n_reg)
+    if (!is.null(projection_mats$P_GD)) {
+      K_penalty_diag <- K_penalty_diag + lambda_gd * diag(projection_mats$P_GD)
+    }
+    if (!is.null(projection_mats$P_Unique)) {
+      K_penalty_diag <- K_penalty_diag + lambda_unique * diag(projection_mats$P_Unique)
+    }
+    if (!is.null(projection_mats$P_Noise)) {
+      K_penalty_diag <- K_penalty_diag + lambda_parallel * diag(projection_mats$P_Noise)
+    }
+    if (!is.null(projection_mats$P_Signal)) {
+      K_penalty_diag <- K_penalty_diag + lambda_signal * diag(projection_mats$P_Signal)
+    }
   }
   
   # --- Solve Ridge Regression ---
