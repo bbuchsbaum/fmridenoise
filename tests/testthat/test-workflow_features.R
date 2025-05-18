@@ -130,3 +130,79 @@ test_that("NDX_Process_Subject produces gdlite PCs in annihilation mode", {
   expect_true(any(grepl("^gdlite_pc_", colnames(res$X_full_design_final))))
 })
 
+# Test 3: Orthogonalized components and unique penalties in annihilation mode
+
+test_that("NDX_Process_Subject generates orthogonalized components with correct penalties", {
+  set.seed(99)
+  TR_test <- 2.0
+  n_time <- 40
+  n_voxels <- 4
+  Y_fmri <- matrix(rnorm(n_time * n_voxels), nrow = n_time, ncol = n_voxels)
+  run_idx <- rep(1, n_time)
+  motion_params <- matrix(0, nrow = n_time, ncol = 2)
+  colnames(motion_params) <- paste0("mot", 1:2)
+
+  events <- data.frame(
+    onsets = c(8, 18),
+    durations = c(4, 4),
+    condition = factor(c("A", "B")),
+    blockids = 1
+  )
+
+  user_opts <- list(
+    opts_pass0 = list(poly_degree = 1),
+    opts_hrf = list(
+      hrf_fir_taps = 6,
+      hrf_fir_span_seconds = 12,
+      good_voxel_R2_threshold = -Inf,
+      lambda1_grid = c(0.1),
+      lambda2_grid = c(0.1),
+      cv_folds = 2,
+      hrf_min_good_voxels = 1,
+      hrf_cluster_method = "none",
+      num_hrf_clusters = 1
+    ),
+    opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1),
+    opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.1),
+    opts_whitening = list(global_ar_on_design = FALSE, max_ar_failures_prop = 0.5),
+    opts_ridge = list(lambda_ridge = 0.5, lambda_noise_ndx_unique = 2),
+    opts_annihilation = list(
+      annihilation_enable_mode = TRUE,
+      annihilation_gdlite_k_max = 2,
+      annihilation_gdlite_tsnr_thresh_noise_pool = 0,
+      min_K_optimal_selection = 1
+    ),
+    max_passes = 1,
+    min_des_gain_convergence = -Inf,
+    min_rho_noise_projection_convergence = -Inf
+  )
+
+  res <- NDX_Process_Subject(
+    Y_fmri = Y_fmri,
+    events = events,
+    motion_params = motion_params,
+    run_idx = run_idx,
+    TR = TR_test,
+    user_options = user_opts,
+    verbose = FALSE
+  )
+
+  expect_true(res$annihilation_mode_active)
+  expect_true(is.matrix(res$rpca_orthogonalized))
+  expect_true(is.matrix(res$spectral_orthogonalized))
+  expect_true(any(grepl("^rpca_unique_comp_", colnames(res$X_full_design_final))))
+  expect_true(any(grepl("^spectral_unique_comp_", colnames(res$X_full_design_final))))
+
+  lambda_unique <- user_opts$opts_ridge$lambda_noise_ndx_unique
+  last_diag <- res$diagnostics_per_pass[[res$num_passes_completed]]
+  expect_true(!is.null(last_diag))
+  proj <- ndx_compute_projection_matrices(
+    U_GD = res$gdlite_pcs,
+    U_Unique = cbind(res$rpca_orthogonalized, res$spectral_orthogonalized),
+    U_Noise = cbind(res$rpca_components, res$spectral_sines),
+    n_regressors = ncol(res$X_full_design_final)
+  )
+  unique_cols <- grep("^(rpca|spectral)_unique_comp_", colnames(res$X_full_design_final))
+  diag_unique <- diag(proj$P_Unique)[unique_cols]
+  expect_true(all(abs(diag_unique * lambda_unique - lambda_unique) < 1e-6))
+})
