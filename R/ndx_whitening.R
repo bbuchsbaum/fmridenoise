@@ -38,9 +38,9 @@
 #' The whitened value `y*_t` (i.e., the estimate of `e_t`) is `y_t - phi_1 * y_{t-1} - ... - phi_order * y_{t-order}`.
 #' This transformation is applied to `Y_data` using voxel-specific coefficients. Unstable AR coefficients are set to zero (no whitening for that voxel).
 #' If `global_ar_on_design` is TRUE, `X_design_full` is whitened using averaged AR coefficients (from stable fits).
-#' Whitening is performed with `stats::filter(method = "recursive")` so that the
+#' Whitening is performed with `stats::filter(method = "convolution", sides = 1)` so that the
 #' output represents the innovations of the AR model.
-#' The first `order` rows of the whitened matrices will contain `NA`s due to the recursive filter initialization.
+#' The first `order` rows of the whitened matrices will contain `NA`s due to the filter initialization.
 #' The `na_mask` in the output identifies these rows.
 #'
 #' @import stats
@@ -173,7 +173,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
           X_whitened <- X_design_full
           AR_coeffs_global <- NULL
       } else {
-          if (verbose) message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", "))))
+          if (verbose) message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", ")))
           X_whitened <- .apply_ar_filter_to_matrix_cols(X_design_full, AR_coeffs_global, order)
           if (verbose) message("X_design_full whitening complete.")
       }
@@ -216,7 +216,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
   }
   
   M_whitened <- apply(M, 2, function(col_data) {
-    stats::filter(col_data, filter = filter_coeffs, method = "recursive")
+    stats::filter(col_data, filter = filter_coeffs, method = "convolution", sides = 1)
   })
   if (is.vector(M_whitened)) {
       M_whitened <- matrix(M_whitened, ncol=1)
@@ -246,7 +246,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     filter_coeffs_for_voxel <- c(1, -as.numeric(voxel_coeffs_row_vec))
     Y_whitened_matrix[, v_idx] <- stats::filter(Y_data_matrix[, v_idx],
                                               filter = filter_coeffs_for_voxel,
-                                              method = "recursive")
+                                              method = "convolution", sides = 1)
   }
   return(Y_whitened_matrix)
 } 
