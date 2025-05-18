@@ -15,6 +15,9 @@
 #'   and users should handle its whitening if necessary for downstream voxel-wise modeling.
 #' @param verbose Logical, if TRUE (default) progress messages are printed. Set to FALSE to silence
 #'   console output.
+#' @param weights Optional numeric matrix of weights (timepoints x voxels) used
+#'   for weighted AR coefficient estimation. If NULL, unweighted estimation is
+#'   performed.
 #'
 #' @return A list containing:
 #'   - `Y_whitened`: The AR(order)-whitened fMRI data (timepoints x voxels).
@@ -44,7 +47,7 @@
 #' @export
 ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
                               order = 2L, global_ar_on_design = TRUE,
-                              verbose = TRUE) {
+                              verbose = TRUE, weights = NULL) {
 
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {
     stop("Y_data must be a numeric matrix.")
@@ -73,6 +76,13 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     stop(sprintf("Number of timepoints (%d) must be greater than AR order (%d).", n_timepoints, order))
   }
 
+  if (!is.null(weights)) {
+    if (!is.matrix(weights) || !is.numeric(weights) ||
+        nrow(weights) != n_timepoints || ncol(weights) != n_voxels) {
+      stop("weights must be a numeric matrix with dimensions matching Y_data")
+    }
+  }
+
   AR_coeffs_voxelwise <- matrix(NA_real_, nrow = n_voxels, ncol = order)
   var_innovations_voxelwise <- numeric(n_voxels)
   num_phi_zeroed <- 0 # Counter for voxels with phi set to 0 (failed fit or unstable)
@@ -85,27 +95,40 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     current_var_pred <- NA_real_
 
     tryCatch({
-      # Check for near-zero variance residuals before calling ar.yw
-      if (stats::var(voxel_residuals, na.rm=TRUE) > .Machine$double.eps^0.5) {
-        ar_fit <- stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
+      if (stats::var(voxel_residuals, na.rm = TRUE) > .Machine$double.eps^0.5) {
+        if (is.null(weights)) {
+          ar_fit <- stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
+        } else {
+          w_vec <- weights[, v_idx]
+          embed_mat <- stats::embed(voxel_residuals, order + 1)
+          y_ar <- embed_mat[, 1]
+          X_ar <- embed_mat[, -1, drop = FALSE]
+          w_ar <- w_vec[(order + 1):n_timepoints]
+          if (sum(w_ar, na.rm = TRUE) > 0) {
+            fit <- tryCatch(stats::lm.wfit(x = X_ar, y = y_ar, w = w_ar),
+                            error = function(e) NULL)
+            if (!is.null(fit) && length(fit$coefficients) == order) {
+              ar_fit <- list(ar = as.numeric(fit$coefficients),
+                             var.pred = sum((fit$residuals^2) * w_ar) / sum(w_ar))
+            }
+          }
+        }
       } else {
         ar_fit <- NULL # Treat as failure if variance is too low
       }
     }, error = function(e) {
-      ar_fit <<- NULL 
+      ar_fit <<- NULL
     })
 
     if (!is.null(ar_fit) && length(ar_fit$ar) == order) {
       phi_candidate <- ar_fit$ar
       # Stability check
       roots <- tryCatch(polyroot(c(1, -phi_candidate)), error = function(e) NULL)
-      if (!is.null(roots) && !any(is.na(roots)) && all(Mod(roots) > 1.00001)) { # Check if all roots are outside unit circle (stable)
+      if (!is.null(roots) && !any(is.na(roots)) && all(Mod(roots) > 1.00001)) {
         current_phi <- phi_candidate
-        current_var_pred <- ar_fit$var.pred 
-      } else {
-        # Roots are on or inside unit circle (unstable), or polyroot failed. Phi remains 0.
-        # message(sprintf("Voxel %d: Unstable AR(%d) coeffs (%s) or polyroot issue. Setting to 0.", v_idx, order, paste(round(phi_candidate,3),collapse=", ")))
+        current_var_pred <- ar_fit$var.pred
       }
+      # else leave zeros
     }
     
     AR_coeffs_voxelwise[v_idx, ] <- current_phi
