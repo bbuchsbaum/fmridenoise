@@ -255,3 +255,12 @@ test_that("ndx_solve_anisotropic_ridge works with projection matrices", {
                                        lambda_values = lambda_vals)
   expect_equal(dim(betas), c(2,1))
 })
+
+test_that("ndx_solve_anisotropic_ridge handles weights", {
+  data <- .create_ridge_test_data(40, 2, 1, c(1, -1), noise_sd = 0.1)
+  K_diag <- rep(0.1, 2)
+  w <- matrix(1, nrow = nrow(data$Y), ncol = 1)
+  betas_unw <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag)
+  betas_w <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag, weights = w)
+  expect_equal(betas_unw, betas_w)
+})

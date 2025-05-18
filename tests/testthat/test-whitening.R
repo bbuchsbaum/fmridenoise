@@ -214,3 +214,15 @@ test_that("ndx_ar2_whitening leaves white noise unchanged", {
   expect_true(all(abs(res$AR_coeffs_voxelwise) < 0.1), label = "AR coeffs of white noise near zero")
   expect_equal(res$Y_whitened[!res$na_mask, 1], Y[!res$na_mask, 1], tolerance = 0.05)
 })
+
+test_that("ndx_ar2_whitening handles precision weights", {
+  set.seed(1234)
+  n_tp <- 100
+  ar_order <- 2
+  Y <- matrix(rnorm(n_tp*2), nrow=n_tp, ncol=2)
+  X <- matrix(rnorm(n_tp*2), nrow=n_tp, ncol=2)
+  weights <- matrix(1, nrow=n_tp, ncol=2)
+  res_unw <- ndx_ar2_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, verbose=FALSE)
+  res_w <- ndx_ar2_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, weights=weights, verbose=FALSE)
+  expect_equal(res_w$AR_coeffs_voxelwise, res_unw$AR_coeffs_voxelwise)
+})

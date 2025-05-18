@@ -303,6 +303,8 @@ NDX_Process_Subject <- function(Y_fmri,
       }
       current_pass_results$S_matrix_rpca <- rpca_out$S_matrix_cat # Store S matrix
       current_pass_results$V_global_singular_values_from_rpca <- rpca_out$V_global_singular_values # Store for next pass
+      current_pass_results$precision_weights <- ndx_precision_weights_from_S(rpca_out$S_matrix_cat)
+      precision_weights_for_pass <- current_pass_results$precision_weights
     } else {
       if (verbose && !is.null(rpca_out)) {
           message("    Warning: rpca_out from ndx_rpca_temporal_components_multirun was not NULL but not a list as expected.")
@@ -312,6 +314,8 @@ NDX_Process_Subject <- function(Y_fmri,
       rpca_components <- NULL 
       current_pass_results$S_matrix_rpca <- NULL
       current_pass_results$V_global_singular_values_from_rpca <- NULL
+      current_pass_results$precision_weights <- NULL
+      precision_weights_for_pass <- NULL
     }
     current_pass_results$rpca_components <- rpca_components
     current_pass_results$spike_TR_mask <- current_overall_spike_TR_mask 
@@ -427,7 +431,8 @@ NDX_Process_Subject <- function(Y_fmri,
         X_design_full = X_full_design,
         Y_residuals_for_AR_fit = temp_glm_for_ar_residuals,
         order = opts_whitening$order %||% 2L,
-        global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE
+        global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE,
+        weights = precision_weights_for_pass
       )
       current_pass_results$Y_whitened <- whitening_output$Y_whitened
       current_pass_results$X_whitened <- whitening_output$X_whitened
@@ -521,8 +526,9 @@ NDX_Process_Subject <- function(Y_fmri,
       ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
         Y_whitened = current_pass_results$Y_whitened,
         X_whitened = current_pass_results$X_whitened,
-        K_penalty_diag = K_penalty_diag, 
-        na_mask = current_pass_results$na_mask_whitening
+        K_penalty_diag = K_penalty_diag,
+        na_mask = current_pass_results$na_mask_whitening,
+        weights = precision_weights_for_pass
       )
       current_pass_results$ridge_betas_whitened <- ridge_betas_whitened
       beta_history_per_pass[[pass_num]] <- ridge_betas_whitened 
@@ -643,6 +649,14 @@ NDX_Process_Subject <- function(Y_fmri,
     pass_diagnostics$num_spectral_sines <- current_pass_results$num_spectral_sines
     pass_diagnostics$lambda_parallel_noise <- current_pass_results$lambda_parallel_noise
     pass_diagnostics$lambda_perp_signal <- current_pass_results$lambda_perp_signal
+
+    if (!is.null(precision_weights_for_pass)) {
+        pass_diagnostics$precision_weight_summary <- stats::quantile(as.vector(precision_weights_for_pass),
+                                                                     probs = c(0, 0.25, 0.5, 0.75, 1),
+                                                                     na.rm = TRUE)
+    } else {
+        pass_diagnostics$precision_weight_summary <- NULL
+    }
     
     pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
 

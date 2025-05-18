@@ -124,6 +124,8 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
   expect_length(workflow_output$diagnostics_per_pass, workflow_output$num_passes_completed)
   if (workflow_output$num_passes_completed > 0) {
     expect_true(all(sapply(workflow_output$diagnostics_per_pass, function(p) "DES" %in% names(p))))
+    expect_true(all(sapply(workflow_output$diagnostics_per_pass,
+                           function(p) "precision_weight_summary" %in% names(p))))
     if (workflow_output$num_passes_completed > 1) { # Rho is calculated from pass 1 onwards effectively for convergence
          # Rho might be NA if no nuisance components or residuals in a pass
          # expect_true(all(sapply(workflow_output$diagnostics_per_pass, function(p) "rho_noise_projection" %in% names(p))))

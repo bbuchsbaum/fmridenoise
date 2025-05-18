@@ -117,12 +117,15 @@ ndx_update_lambda_aggressiveness <- function(lambda_parallel, rho_noise_projecti
 #' @param lambda_values Optional list with elements `lambda_parallel`,
 #'   `lambda_perp_signal`, `lambda_gd`, and `lambda_unique` used when
 #'   `K_penalty_diag` is not given.
+#' @param weights Optional numeric vector or matrix of weights to apply to each
+#'   timepoint. If a matrix, its dimensions must match `Y_whitened` and the
+#'   weighting is applied per voxel.
 #' @return A matrix of estimated beta coefficients (n_regressors x voxels/responses).
 #'   Returns NULL if inputs are invalid or the problem cannot be solved.
 #' @export ndx_solve_anisotropic_ridge
 ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag = NULL,
                                         na_mask = NULL, projection_mats = NULL,
-                                        lambda_values = NULL) {
+                                        lambda_values = NULL, weights = NULL) {
 
   # --- Input Validation ---
   if (is.null(Y_whitened) || is.null(X_whitened)){
@@ -140,6 +143,23 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
   if (nrow(Y_whitened) != nrow(X_whitened)) {
     warning("Y_whitened and X_whitened must have the same number of rows (timepoints).")
     return(NULL)
+  }
+  if (!is.null(weights)) {
+    if (is.matrix(weights)) {
+      if (!is.numeric(weights) || nrow(weights) != nrow(Y_whitened) ||
+          ncol(weights) != ncol(Y_whitened)) {
+        warning("weights matrix must match dimensions of Y_whitened")
+        return(NULL)
+      }
+    } else if (is.numeric(weights) && is.vector(weights)) {
+      if (length(weights) != nrow(Y_whitened)) {
+        warning("weights vector length must equal number of rows in Y_whitened")
+        return(NULL)
+      }
+    } else {
+      warning("weights must be a numeric vector or matrix")
+      return(NULL)
+    }
   }
   if (!is.null(K_penalty_diag)) {
     if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
@@ -167,6 +187,7 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       warning("na_mask must be a logical vector with length equal to nrow(Y_whitened). Using all timepoints.")
       Y_eff <- Y_whitened
       X_eff <- X_whitened
+      W_eff <- if (is.null(weights)) NULL else weights
     } else {
       if (all(na_mask)) {
         warning("All timepoints are masked by na_mask. Cannot solve ridge regression.")
@@ -174,10 +195,20 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       }
       Y_eff <- Y_whitened[!na_mask, , drop = FALSE]
       X_eff <- X_whitened[!na_mask, , drop = FALSE]
+      if (!is.null(weights)) {
+        if (is.matrix(weights)) {
+          W_eff <- weights[!na_mask, , drop = FALSE]
+        } else {
+          W_eff <- weights[!na_mask]
+        }
+      } else {
+        W_eff <- NULL
+      }
     }
   } else {
     Y_eff <- Y_whitened
     X_eff <- X_whitened
+    W_eff <- if (is.null(weights)) NULL else weights
   }
 
   if (nrow(X_eff) == 0) {
@@ -220,8 +251,38 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       warning("One or more regressors in X_eff have near-zero variance (but may be stabilized by penalty).")
   }
 
-  XtX <- crossprod(X_eff)
-  XtY <- crossprod(X_eff, Y_eff)
+  if (is.null(W_eff)) {
+    XtX <- crossprod(X_eff)
+    XtY <- crossprod(X_eff, Y_eff)
+  } else if (is.matrix(W_eff)) {
+    betas <- matrix(NA_real_, ncol = ncol(Y_eff), nrow = ncol(X_eff))
+    for (v in seq_len(ncol(Y_eff))) {
+      w_sqrt <- sqrt(W_eff[, v])
+      Xw <- X_eff * w_sqrt
+      Yw <- Y_eff[, v] * w_sqrt
+      XtX <- crossprod(Xw)
+      XtY <- crossprod(Xw, Yw)
+
+      safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
+      XtX_penalized <- XtX
+      diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+
+      b <- tryCatch({
+        chol_decomp <- chol(XtX_penalized)
+        chol2inv(chol_decomp) %*% XtY
+      }, error = function(e) NULL)
+      if (!is.null(b)) betas[, v] <- b
+    }
+    if (is.null(colnames(X_whitened))) rownames(betas) <- NULL else rownames(betas) <- colnames(X_whitened)
+    if (!is.null(colnames(Y_whitened))) colnames(betas) <- colnames(Y_whitened)
+    return(betas)
+  } else {
+    w_sqrt <- sqrt(W_eff)
+    Xw <- X_eff * w_sqrt
+    Yw <- Y_eff * w_sqrt
+    XtX <- crossprod(Xw)
+    XtY <- crossprod(Xw, Yw)
+  }
   
   if (ncol(X_eff) == 0) { 
       warning("X_eff has zero columns after NA removal. Cannot solve.")
