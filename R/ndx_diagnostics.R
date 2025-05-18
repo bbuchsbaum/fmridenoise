@@ -71,7 +71,7 @@ ndx_generate_html_report <- function(workflow_output,
     graphics::image(t(abs(S_mat) > 0), axes = FALSE, useRaster = TRUE,
                     xlab = "Time", ylab = "Voxel",
                     main = "RPCA Spike Carpet")
-    grDevices::box()
+    graphics::box()
     grDevices::dev.off()
   }
 
