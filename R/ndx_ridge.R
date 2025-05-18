@@ -98,6 +98,37 @@ ndx_update_lambda_aggressiveness <- function(lambda_parallel, rho_noise_projecti
   lambda_parallel
 }
 
+#' Estimate Residual Variance after Whitening
+#'
+#' Computes a simple estimate of the residual variance from a whitened
+#' design matrix and response matrix. This is used for scaling the lambda
+#' grid during GCV search in anisotropic ridge regression.
+#'
+#' @param Y_whitened Numeric matrix of whitened responses.
+#' @param X_whitened Numeric matrix of whitened design.
+#' @param na_mask Optional logical vector identifying rows to exclude
+#'   (typically the initial rows lost during AR whitening).
+#' @return Numeric scalar variance estimate. Returns `NA` if the estimate
+#'   cannot be computed.
+#' @export
+ndx_estimate_res_var_whitened <- function(Y_whitened, X_whitened, na_mask = NULL) {
+  if (!is.null(na_mask)) {
+    Y_eff <- Y_whitened[!na_mask, , drop = FALSE]
+    X_eff <- X_whitened[!na_mask, , drop = FALSE]
+  } else {
+    Y_eff <- Y_whitened
+    X_eff <- X_whitened
+  }
+
+  if (nrow(X_eff) == 0 || ncol(X_eff) == 0) return(NA_real_)
+
+  fit <- tryCatch(stats::lm.fit(x = X_eff, y = Y_eff), error = function(e) NULL)
+  if (is.null(fit) || is.null(fit$residuals)) return(NA_real_)
+
+  stats::var(as.vector(fit$residuals), na.rm = TRUE)
+}
+
+
 
 #' Solve Anisotropic Ridge Regression Problem
 #'
@@ -120,12 +151,20 @@ ndx_update_lambda_aggressiveness <- function(lambda_parallel, rho_noise_projecti
 #' @param weights Optional numeric vector or matrix of weights to apply to each
 #'   timepoint. If a matrix, its dimensions must match `Y_whitened` and the
 #'   weighting is applied per voxel.
+#' @param gcv_lambda Logical, if TRUE perform GCV tuning of `lambda_parallel`
+#'   (and by extension `lambda_perp_signal`) using `ndx_gcv_tune_lambda_parallel`.
+#' @param res_var_scale Numeric, residual variance estimate used to scale the
+#'   lambda search grid when `gcv_lambda` is TRUE.
+#' @param lambda_grid Numeric vector of candidate lambda values for GCV when
+#'   `gcv_lambda` is TRUE. Defaults to `10^seq(-2, 2, length.out = 5)`.
 #' @return A matrix of estimated beta coefficients (n_regressors x voxels/responses).
 #'   Returns NULL if inputs are invalid or the problem cannot be solved.
 #' @export ndx_solve_anisotropic_ridge
 ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag = NULL,
                                         na_mask = NULL, projection_mats = NULL,
-                                        lambda_values = NULL, weights = NULL) {
+                                        lambda_values = NULL, weights = NULL,
+                                        gcv_lambda = FALSE, res_var_scale = 1.0,
+                                        lambda_grid = 10^seq(-2, 2, length.out = 5)) {
 
   # --- Input Validation ---
   if (is.null(Y_whitened) || is.null(X_whitened)){
@@ -226,6 +265,14 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
     lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
     lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
     lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+
+    if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
+      lambda_ratio <- lambda_signal / lambda_parallel
+      lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
+                                                      lambda_grid = lambda_grid * res_var_scale,
+                                                      lambda_ratio = lambda_ratio)
+      lambda_signal <- lambda_ratio * lambda_parallel
+    }
 
     n_reg <- ncol(X_eff)
     K_penalty_diag <- rep(0, n_reg)

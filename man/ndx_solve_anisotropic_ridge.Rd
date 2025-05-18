@@ -10,7 +10,10 @@ ndx_solve_anisotropic_ridge(
   K_penalty_diag = NULL,
   na_mask = NULL,
   projection_mats = NULL,
-  lambda_values = NULL
+  lambda_values = NULL,
+  gcv_lambda = FALSE,
+  res_var_scale = 1,
+  lambda_grid = 10^seq(-2, 2, length.out = 5)
 )
 }
 \arguments{
@@ -29,6 +32,9 @@ If NULL, all timepoints are used.}
 
 \item{lambda_values}{Optional list with lambda parameters (e.g., \code{lambda_parallel},
 \code{lambda_perp_signal}) used to construct \code{K_penalty_diag} when it is not given.}
+\item{gcv_lambda}{Logical flag to enable GCV tuning of \code{lambda_parallel}.}
+\item{res_var_scale}{Residual variance estimate used to scale the GCV search grid.}
+\item{lambda_grid}{Numeric vector of candidate lambda values for GCV.}
 }
 \value{
 A matrix of estimated beta coefficients (n_regressors x voxels/responses).

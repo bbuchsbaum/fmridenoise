@@ -451,85 +451,95 @@ NDX_Process_Subject <- function(Y_fmri,
     if (!is.null(current_pass_results$X_whitened) && !is.null(current_pass_results$Y_whitened) && ncol(current_pass_results$X_whitened) > 0) {
       
       n_regressors <- ncol(current_pass_results$X_whitened)
-      K_penalty_diag <- rep(opts_ridge$lambda_perp_signal %||% 0.1, n_regressors) # Default to lambda_perp
-      
+
       if (opts_ridge$anisotropic_ridge_enable %||% TRUE) {
         regressor_names <- colnames(current_pass_results$X_whitened)
         if (!is.null(regressor_names)) {
-          # Identify ND-X noise columns (RPCA and Spectral)
-          # These patterns should match what ndx_build_design_matrix creates
           is_rpca_col <- grepl("^rpca_comp_", regressor_names)
           is_spectral_col <- grepl("^(sin_f|cos_f|spectral_comp_)", regressor_names)
-          is_gdlite_col <- grepl("^gdlite_pc_", regressor_names)  # For Annihilation Mode
-          
-          # Special handling for orthogonalized components in Annihilation Mode
+          is_gdlite_col <- grepl("^gdlite_pc_", regressor_names)
           is_rpca_unique_col <- grepl("^rpca_unique_comp_", regressor_names)
           is_spectral_unique_col <- grepl("^spectral_unique_comp_", regressor_names)
-          
-          # Identify appropriate lambda for each regressor type
+
           noise_rpca_col_indices <- which(is_rpca_col)
           noise_spectral_col_indices <- which(is_spectral_col)
           noise_gdlite_col_indices <- which(is_gdlite_col)
           noise_rpca_unique_col_indices <- which(is_rpca_unique_col)
           noise_spectral_unique_col_indices <- which(is_spectral_unique_col)
-          
-          # Standard non-annihilation mode lambdas for RPCA and spectral
-          if (length(noise_rpca_col_indices) > 0) {
-            K_penalty_diag[noise_rpca_col_indices] <- opts_ridge$lambda_noise_rpca %||% opts_ridge$lambda_parallel_noise %||% 10.0
-          }
-          
-          if (length(noise_spectral_col_indices) > 0) {
-            K_penalty_diag[noise_spectral_col_indices] <- opts_ridge$lambda_noise_spectral %||% opts_ridge$lambda_parallel_noise %||% 10.0
-          }
-          
-          # Annihilation Mode specific lambdas
+
+          U_noise <- NULL
+          if (length(noise_rpca_col_indices) > 0)
+            U_noise <- cbind(U_noise, current_pass_results$X_whitened[, noise_rpca_col_indices, drop = FALSE])
+          if (length(noise_spectral_col_indices) > 0)
+            U_noise <- cbind(U_noise, current_pass_results$X_whitened[, noise_spectral_col_indices, drop = FALSE])
+
+          U_gd <- NULL
+          if (opts_annihilation$annihilation_enable_mode && length(noise_gdlite_col_indices) > 0)
+            U_gd <- current_pass_results$X_whitened[, noise_gdlite_col_indices, drop = FALSE]
+
+          U_unique <- NULL
           if (opts_annihilation$annihilation_enable_mode) {
-            if (length(noise_gdlite_col_indices) > 0) {
-              K_penalty_diag[noise_gdlite_col_indices] <- opts_ridge$lambda_noise_gdlite %||% 1.0
-              if (verbose) message(sprintf("    Applied lambda_noise_gdlite=%.2f to %d GLMdenoise PC columns.", 
-                                         opts_ridge$lambda_noise_gdlite %||% 1.0, length(noise_gdlite_col_indices)))
-            }
-            
-            if (length(noise_rpca_unique_col_indices) > 0) {
-              K_penalty_diag[noise_rpca_unique_col_indices] <- opts_ridge$lambda_noise_ndx_unique %||% 1.0
-              if (verbose) message(sprintf("    Applied lambda_noise_ndx_unique=%.2f to %d orthogonalized RPCA columns.", 
-                                         opts_ridge$lambda_noise_ndx_unique %||% 1.0, length(noise_rpca_unique_col_indices)))
-            }
-            
-            if (length(noise_spectral_unique_col_indices) > 0) {
-              K_penalty_diag[noise_spectral_unique_col_indices] <- opts_ridge$lambda_noise_ndx_unique %||% 1.0
-              if (verbose) message(sprintf("    Applied lambda_noise_ndx_unique=%.2f to %d orthogonalized spectral columns.", 
-                                         opts_ridge$lambda_noise_ndx_unique %||% 1.0, length(noise_spectral_unique_col_indices)))
-            }
+            if (length(noise_rpca_unique_col_indices) > 0)
+              U_unique <- cbind(U_unique, current_pass_results$X_whitened[, noise_rpca_unique_col_indices, drop = FALSE])
+            if (length(noise_spectral_unique_col_indices) > 0)
+              U_unique <- cbind(U_unique, current_pass_results$X_whitened[, noise_spectral_unique_col_indices, drop = FALSE])
           }
-          
-          # For non-annihilation mode or if specific columns weren't found, apply default lambda
-          standard_noise_cols <- c(noise_rpca_col_indices, noise_spectral_col_indices, 
-                                 noise_gdlite_col_indices, noise_rpca_unique_col_indices, 
-                                 noise_spectral_unique_col_indices)
-          
-          if (length(standard_noise_cols) > 0) {
-            if (verbose) message(sprintf("    Applied appropriate lambdas to %d total noise columns.", length(standard_noise_cols)))
-          } else {
-            if (verbose) message("    No specific noise columns found for anisotropic penalty; all regressors use lambda_perp_signal.")
-          }
+
+          proj_mats <- ndx_compute_projection_matrices(U_GD = U_gd, U_Unique = U_unique,
+                                                       U_Noise = U_noise, n_regressors = n_regressors)
+
+          res_var_est <- ndx_estimate_res_var_whitened(current_pass_results$Y_whitened,
+                                                       current_pass_results$X_whitened,
+                                                       current_pass_results$na_mask_whitening)
+
+          lambda_ratio <- (opts_ridge$lambda_perp_signal %||% 0.1) /
+                          (opts_ridge$lambda_parallel_noise %||% 10.0)
+          lambda_grid <- 10^seq(-2, 2, length.out = 5) * (res_var_est %||% 1)
+
+          lambda_parallel_tuned <- ndx_gcv_tune_lambda_parallel(
+            current_pass_results$Y_whitened,
+            current_pass_results$X_whitened,
+            proj_mats$P_Noise,
+            lambda_grid = lambda_grid,
+            lambda_ratio = lambda_ratio
+          )
+
+          lambda_values <- list(
+            lambda_parallel = lambda_parallel_tuned,
+            lambda_perp_signal = lambda_ratio * lambda_parallel_tuned,
+            lambda_gd = opts_ridge$lambda_noise_gdlite %||% lambda_parallel_tuned,
+            lambda_unique = opts_ridge$lambda_noise_ndx_unique %||% lambda_parallel_tuned
+          )
+
+          current_pass_results$lambda_parallel_noise <- lambda_parallel_tuned
+          current_pass_results$lambda_perp_signal <- lambda_ratio * lambda_parallel_tuned
+
+          ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
+            Y_whitened = current_pass_results$Y_whitened,
+            X_whitened = current_pass_results$X_whitened,
+            projection_mats = proj_mats,
+            lambda_values = lambda_values,
+            na_mask = current_pass_results$na_mask_whitening,
+            weights = precision_weights_for_pass,
+            gcv_lambda = FALSE,
+            res_var_scale = res_var_est
+          )
         } else {
-          if (verbose) message("    Colnames for X_whitened not available, using isotropic penalty with lambda_perp_signal for all.")
+          ridge_betas_whitened <- NULL
+          if (verbose) message("    Colnames for X_whitened not available, anisotropic ridge skipped.")
         }
-      } else { # Isotropic ridge (fallback to old behavior or if anisotropic disabled)
+      } else { # Isotropic ridge
         K_penalty_diag <- rep(opts_ridge$lambda_ridge %||% 1.0, n_regressors)
-        if (verbose) message(sprintf("    Using isotropic ridge with lambda=%.2f for all regressors.", opts_ridge$lambda_ridge %||% 1.0))
+        current_pass_results$lambda_parallel_noise <- opts_ridge$lambda_ridge %||% 1.0
+        current_pass_results$lambda_perp_signal <- opts_ridge$lambda_ridge %||% 1.0
+        ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
+          Y_whitened = current_pass_results$Y_whitened,
+          X_whitened = current_pass_results$X_whitened,
+          K_penalty_diag = K_penalty_diag,
+          na_mask = current_pass_results$na_mask_whitening,
+          weights = precision_weights_for_pass
+        )
       }
-      current_pass_results$lambda_parallel_noise <- opts_ridge$lambda_parallel_noise %||% opts_ridge$lambda_ridge %||% 1.0
-      current_pass_results$lambda_perp_signal <- opts_ridge$lambda_perp_signal %||% opts_ridge$lambda_ridge %||% 1.0
-      
-      ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
-        Y_whitened = current_pass_results$Y_whitened,
-        X_whitened = current_pass_results$X_whitened,
-        K_penalty_diag = K_penalty_diag,
-        na_mask = current_pass_results$na_mask_whitening,
-        weights = precision_weights_for_pass
-      )
       current_pass_results$ridge_betas_whitened <- ridge_betas_whitened
       beta_history_per_pass[[pass_num]] <- ridge_betas_whitened 
 
