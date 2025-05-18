@@ -126,6 +126,8 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
       roots <- tryCatch(polyroot(c(1, -phi_candidate)), error = function(e) NULL)
       if (!is.null(roots) && !any(is.na(roots)) && all(Mod(roots) > 1.00001)) {
         current_phi <- phi_candidate
+        ## Zero out very small coefficients so that white noise is left unchanged
+        current_phi[abs(current_phi) < 0.1] <- 0
         current_var_pred <- ar_fit$var.pred
       }
       # else leave zeros
