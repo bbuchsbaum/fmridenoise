@@ -12,10 +12,12 @@ workflow_mock <- list(
     list(
       DES = 0.2,
       k_rpca_global = 3,
+      num_hrf_clusters = 1,
       num_spectral_sines = 1,
       lambda_parallel_noise = 0.5,
       lambda_perp_signal = 0.1,
-      rho_noise_projection = 0.25
+      rho_noise_projection = 0.25,
+      ljung_box_p = 0.6
     )
   ),
   num_passes_completed = 2,
@@ -41,8 +43,18 @@ test_that("JSON certificate is generated with expected fields", {
   expect_true(all(c(
     "ndx_version",
     "final_DES",
-    "num_passes_converged",
+    "passes_converged",
+    "ljung_box_p",
+    "var_ratio",
+    "verdict",
     "final_rho_noise_projection",
     "final_adaptive_hyperparameters"
   ) %in% names(cert)))
+  expect_true(all(c(
+    "k_rpca_global",
+    "num_hrf_clusters",
+    "num_spectral_sines",
+    "lambda_parallel_noise",
+    "lambda_perp_signal"
+  ) %in% names(cert$final_adaptive_hyperparameters)))
 })
