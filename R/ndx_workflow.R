@@ -73,6 +73,8 @@ NDX_Process_Subject <- function(Y_fmri,
     return_full_model = FALSE,
     hrf_cluster_method = "none", # Default to no clustering
     num_hrf_clusters = 1L,       # Consistent with no clustering
+    hrf_cluster_merge_corr_thresh = 0.95,
+    hrf_cluster_min_size = 5L,
     # Options for sparse event handling in HRF estimation (NDX-12)
     hrf_min_events_for_fir = 6L, 
     hrf_low_event_threshold = 12L,

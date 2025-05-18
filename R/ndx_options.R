@@ -31,6 +31,8 @@
 #'   \item{`return_full_model`}{Logical, whether to return full model. Default: FALSE}
 #'   \item{`hrf_cluster_method`}{Character, clustering method. Default: "none"}
 #'   \item{`num_hrf_clusters`}{Integer, number of HRF clusters. Default: 1}
+#'   \item{`hrf_cluster_merge_corr_thresh`}{Numeric, correlation threshold for merging clusters. Default: 0.95}
+#'   \item{`hrf_cluster_min_size`}{Integer, minimum voxels per cluster before reassignment. Default: 5}
 #'   \item{`hrf_min_events_for_fir`}{Integer, minimum events for FIR. Default: 6}
 #'   \item{`hrf_low_event_threshold`}{Integer, low event threshold. Default: 12}
 #'   \item{`hrf_target_event_count_for_lambda_scaling`}{Integer, target event count. Default: 20}

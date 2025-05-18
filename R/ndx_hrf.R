@@ -126,9 +126,15 @@ ndx_estimate_initial_hrfs <- function(Y_fmri, pass0_residuals, events,
   if (user_options$hrf_cluster_method == "pam" && user_options$num_hrf_clusters > 1 && !is.null(Y_good_voxels_all_trs) && ncol(Y_good_voxels_all_trs) > 0) {
     Y_good_voxels_for_clustering <- Y_good_voxels_all_trs[valid_TRs_for_hrf_estimation_mask, , drop = FALSE]
     if (nrow(Y_good_voxels_for_clustering) > 0) {
-      cluster_info <- .perform_hrf_clustering(Y_good_voxels_for_clustering, 
-                                            user_options$num_hrf_clusters, 
+      raw_cluster_info <- .perform_hrf_clustering(Y_good_voxels_for_clustering,
+                                            user_options$num_hrf_clusters,
                                             user_options, verbose = (user_options$verbose_hrf %||% FALSE))
+      cluster_info <- .auto_adapt_hrf_clusters(
+                         Y_for_clustering = Y_good_voxels_for_clustering,
+                         cluster_ids = raw_cluster_info$voxel_cluster_ids,
+                         merge_corr_thresh = user_options$hrf_cluster_merge_corr_thresh,
+                         min_cluster_size = user_options$hrf_cluster_min_size,
+                         verbose = (user_options$verbose_hrf %||% FALSE))
     } else {
         if(user_options$verbose_hrf %||% FALSE) message("No valid TRs in Y_good_voxels_for_clustering, skipping clustering.")
     }
@@ -274,9 +280,11 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
     lambda2_grid = 10^seq(-3, 0, length.out = 5),
     hrf_min_good_voxels = 50L,
     return_full_model = FALSE,
-    hrf_cluster_method = "none", 
+    hrf_cluster_method = "none",
     num_hrf_clusters = 1L,
-    hrf_min_events_for_fir = 6L, 
+    hrf_cluster_merge_corr_thresh = 0.95,
+    hrf_cluster_min_size = 5L,
+    hrf_min_events_for_fir = 6L,
     hrf_low_event_threshold = 12L,
     hrf_target_event_count_for_lambda_scaling = 20L,
     hrf_use_canonical_fallback_for_ultra_sparse = FALSE,
@@ -360,6 +368,15 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
       warning("hrf_cluster_method is 'none' but num_hrf_clusters is not 1. Setting num_hrf_clusters to 1.")
       user_options$num_hrf_clusters <- 1L
   }
+
+  if(!is.numeric(user_options$hrf_cluster_merge_corr_thresh) || length(user_options$hrf_cluster_merge_corr_thresh) != 1 ||
+     user_options$hrf_cluster_merge_corr_thresh <= -1 || user_options$hrf_cluster_merge_corr_thresh > 1) {
+      stop("hrf_cluster_merge_corr_thresh must be a single numeric value in (-1,1].")
+  }
+  if(!is.numeric(user_options$hrf_cluster_min_size) || user_options$hrf_cluster_min_size < 1 || round(user_options$hrf_cluster_min_size) != user_options$hrf_cluster_min_size) {
+      stop("hrf_cluster_min_size must be a positive integer.")
+  }
+  user_options$hrf_cluster_min_size <- as.integer(user_options$hrf_cluster_min_size)
 
   if(!is.numeric(user_options$hrf_min_events_for_fir) || user_options$hrf_min_events_for_fir < 0 || round(user_options$hrf_min_events_for_fir) != user_options$hrf_min_events_for_fir) stop("hrf_min_events_for_fir must be a non-negative integer.")
   user_options$hrf_min_events_for_fir <- as.integer(user_options$hrf_min_events_for_fir)
@@ -867,8 +884,93 @@ project_hrf_cone <- function(h,
                 medoid_indices = if(ncol(Y_for_clustering)>0) 1L else integer(0) ))
   }
   
-  return(list(voxel_cluster_ids = pam_fit$clustering, 
-              num_clusters_eff = length(unique(pam_fit$clustering)), 
+  return(list(voxel_cluster_ids = pam_fit$clustering,
+              num_clusters_eff = length(unique(pam_fit$clustering)),
               medoid_indices = pam_fit$id.med # Indices of medoids *within the input to pam* (i.e., among good_voxels_idx)
               ))
-} 
+}
+
+#' Auto-adapt HRF clusters by merging highly similar or tiny clusters
+#'
+#' This simplified routine merges clusters whose mean time courses are
+#' highly correlated and reassigns clusters with very few voxels to the
+#' most similar larger cluster.
+#' @keywords internal
+.auto_adapt_hrf_clusters <- function(Y_for_clustering, cluster_ids,
+                                    merge_corr_thresh = 0.95,
+                                    min_cluster_size = 5L,
+                                    verbose = FALSE) {
+  if (is.null(cluster_ids) || length(unique(cluster_ids)) <= 1) {
+    return(list(voxel_cluster_ids = cluster_ids,
+                num_clusters_eff = length(unique(cluster_ids)),
+                medoid_indices = if(length(cluster_ids) > 0) 1L else integer(0)))
+  }
+
+  cluster_ids <- as.integer(cluster_ids)
+  changed <- TRUE
+  while (changed) {
+    changed <- FALSE
+    cl_levels <- sort(unique(cluster_ids))
+    if (length(cl_levels) <= 1) break
+
+    cluster_means <- sapply(cl_levels, function(cl)
+      rowMeans(Y_for_clustering[, cluster_ids == cl, drop = FALSE]))
+    corr_mat <- stats::cor(cluster_means)
+    diag(corr_mat) <- NA
+    high_pairs <- which(corr_mat > merge_corr_thresh, arr.ind = TRUE)
+    if (nrow(high_pairs) > 0) {
+      pair <- high_pairs[1, ]
+      cl1 <- cl_levels[pair[1]]; cl2 <- cl_levels[pair[2]]
+      sz1 <- sum(cluster_ids == cl1); sz2 <- sum(cluster_ids == cl2)
+      if (verbose)
+        message(sprintf("  Merging clusters %d and %d due to high correlation (%.2f)",
+                        cl1, cl2, corr_mat[pair[1], pair[2]]))
+      keep_cl <- if (sz1 >= sz2) cl1 else cl2
+      drop_cl <- if (sz1 >= sz2) cl2 else cl1
+      cluster_ids[cluster_ids == drop_cl] <- keep_cl
+      changed <- TRUE
+    }
+  }
+
+  # Reassign small clusters
+  cl_levels <- sort(unique(cluster_ids))
+  if (length(cl_levels) > 1) {
+    cluster_means <- sapply(cl_levels, function(cl)
+      rowMeans(Y_for_clustering[, cluster_ids == cl, drop = FALSE]))
+    for (cl in cl_levels) {
+      vox_idx <- which(cluster_ids == cl)
+      if (length(vox_idx) < min_cluster_size) {
+        other_cls <- setdiff(cl_levels, cl)
+        if (length(other_cls) == 0) next
+        cor_to_others <- stats::cor(rowMeans(Y_for_clustering[, vox_idx, drop = FALSE]),
+                                    cluster_means[, match(other_cls, cl_levels), drop = FALSE])
+        nearest <- other_cls[which.max(cor_to_others)]
+        if (verbose)
+          message(sprintf("  Reassigning small cluster %d (n=%d) to %d", cl, length(vox_idx), nearest))
+        cluster_ids[vox_idx] <- nearest
+      }
+    }
+  }
+
+  # Renumber sequentially
+  final_levels <- sort(unique(cluster_ids))
+  mapping <- setNames(seq_along(final_levels), final_levels)
+  cluster_ids <- mapping[as.character(cluster_ids)]
+  final_levels <- sort(unique(cluster_ids))
+
+  medoid_indices <- integer(length(final_levels))
+  for (i in seq_along(final_levels)) {
+    cl <- final_levels[i]
+    vox_idx <- which(cluster_ids == cl)
+    if (length(vox_idx) == 1) {
+      medoid_indices[i] <- vox_idx
+    } else {
+      pam_res <- cluster::pam(t(Y_for_clustering[, vox_idx, drop = FALSE]), k = 1)
+      medoid_indices[i] <- vox_idx[pam_res$id.med]
+    }
+  }
+
+  list(voxel_cluster_ids = cluster_ids,
+       num_clusters_eff = length(final_levels),
+       medoid_indices = medoid_indices)
+}
