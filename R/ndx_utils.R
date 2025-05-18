@@ -304,3 +304,53 @@ merge_lists <- function(defaults, user) {
   if (is.null(a)) b else a
 }
 
+
+#' Calculate Beta Stability Across Runs
+#'
+#' Computes average pairwise correlations of task beta coefficients across runs
+#' for each pass of the ND-X workflow.
+#'
+#' @param betas_per_pass A list where each element corresponds to a pass and
+#'   contains a list of beta matrices (one per run).
+#' @return Numeric vector of average cross-run correlations for each pass. If a
+#'   pass contains fewer than two runs, the returned value is `NA`.
+#' @export
+calculate_beta_stability <- function(betas_per_pass) {
+  if (!is.list(betas_per_pass) || length(betas_per_pass) == 0) {
+    stop("betas_per_pass must be a non-empty list")
+  }
+  stability <- numeric(length(betas_per_pass))
+  for (i in seq_along(betas_per_pass)) {
+    run_betas <- betas_per_pass[[i]]
+    if (!is.list(run_betas) || length(run_betas) < 2) {
+      stability[i] <- NA_real_
+      next
+    }
+    vecs <- lapply(run_betas, function(b) as.vector(b))
+    cor_vals <- combn(seq_along(vecs), 2, function(idx) {
+      stats::cor(vecs[[idx[1]]], vecs[[idx[2]]], use = "pairwise.complete.obs")
+    })
+    stability[i] <- mean(cor_vals, na.rm = TRUE)
+  }
+  stability
+}
+
+#' Compute Ljung-Box p-values for Residuals
+#'
+#' Applies the Ljung-Box test to each residual time series and returns the
+#' p-values.
+#'
+#' @param residuals Matrix of residuals (timepoints x voxels).
+#' @param lag Number of lags to use in the Ljung-Box test. Default 5.
+#' @return Numeric vector of p-values, one per column of `residuals`.
+#' @export
+compute_ljung_box_pvalues <- function(residuals, lag = 5L) {
+  if (!is.matrix(residuals) || !is.numeric(residuals)) {
+    stop("residuals must be a numeric matrix")
+  }
+  apply(residuals, 2, function(ts) {
+    if (all(is.na(ts))) return(NA_real_)
+    stats::Box.test(ts, lag = lag, type = "Ljung-Box")$p.value
+  })
+}
+

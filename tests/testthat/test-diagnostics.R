@@ -18,6 +18,10 @@ workflow_mock <- list(
       rho_noise_projection = 0.25
     )
   ),
+  beta_history_per_pass = list(
+    list(matrix(rnorm(n_vox), 1, n_vox), matrix(rnorm(n_vox), 1, n_vox)),
+    list(matrix(rnorm(n_vox), 1, n_vox), matrix(rnorm(n_vox), 1, n_vox))
+  ),
   num_passes_completed = 2,
   S_matrix_rpca_final = matrix(0, n_time, n_vox)
 )
@@ -29,6 +33,8 @@ test_that("HTML report is generated", {
     html_path <- ndx_generate_html_report(workflow_mock, pass0_res, TR_test, output_dir = tmpdir)
   })
   expect_true(file.exists(file.path(tmpdir, "ndx_diagnostic_report.html")))
+  expect_true(file.exists(file.path(tmpdir, "beta_stability.png")))
+  expect_true(file.exists(file.path(tmpdir, "ljung_box_pvalues.png")))
 })
 
 test_that("JSON certificate is generated with expected fields", {
@@ -43,6 +49,8 @@ test_that("JSON certificate is generated with expected fields", {
     "final_DES",
     "num_passes_converged",
     "final_rho_noise_projection",
+    "final_beta_stability",
+    "ljung_box_p_median",
     "final_adaptive_hyperparameters"
   ) %in% names(cert)))
 })

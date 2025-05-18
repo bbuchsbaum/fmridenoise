@@ -236,3 +236,21 @@ test_that("ndx_orthogonalize_matrix_against_basis handles empty basis", {
   expect_equal(ndx_orthogonalize_matrix_against_basis(target, NULL), target)
   expect_equal(ndx_orthogonalize_matrix_against_basis(target, matrix(numeric(0), nrow = 4)), target)
 })
+
+test_that("calculate_beta_stability computes cross-run correlations", {
+  run1_p1 <- matrix(1:4, nrow = 2)
+  run2_p1 <- run1_p1 + 0.01
+  run1_p2 <- matrix(5:8, nrow = 2)
+  run2_p2 <- run1_p2 + 0.01
+  bs <- calculate_beta_stability(list(list(run1_p1, run2_p1), list(run1_p2, run2_p2)))
+  expect_length(bs, 2)
+  expect_true(all(bs > 0.99))
+})
+
+test_that("compute_ljung_box_pvalues returns p-values", {
+  set.seed(1)
+  res <- matrix(rnorm(100 * 3), 100, 3)
+  pvals <- compute_ljung_box_pvalues(res, lag = 5)
+  expect_length(pvals, 3)
+  expect_true(all(pvals > 0))
+})

@@ -3,7 +3,7 @@
 #' This function creates a simple HTML report summarizing key diagnostics from
 #' a run of `NDX_Process_Subject`. It plots the Denoising Efficacy Score (DES)
 #' across passes, compares the power spectral density (PSD) of residuals from
-#' Pass 0 and the final ND-X pass, and optionally shows a spike "carpet" plot
+#' Pass 0 and the final ND-X pass, and optionally shows a spike "carpet" plot, displays beta stability across runs, and plots Ljung-Box p-values of final residuals
 #' from the RPCA `S` matrix.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
@@ -43,6 +43,21 @@ ndx_generate_html_report <- function(workflow_output,
                  main = "Denoising Efficacy Score per Pass")
   grDevices::dev.off()
 
+  # ---- Beta stability plot ----
+  beta_stab_png <- file.path(output_dir, "beta_stability.png")
+  if (!is.null(workflow_output$beta_history_per_pass)) {
+    beta_stab <- tryCatch({
+      calculate_beta_stability(workflow_output$beta_history_per_pass)
+    }, error = function(e) NA)
+    grDevices::png(beta_stab_png, width = 600, height = 400)
+    graphics::plot(seq_along(beta_stab), beta_stab, type = "b",
+                   xlab = "Pass", ylab = "Correlation",
+                   main = expression(beta*"-stability"), ylim = c(-1,1))
+    grDevices::dev.off()
+  } else {
+    beta_stab_png <- NULL
+  }
+
   # ---- Residual PSD plot ----
   psd_png <- file.path(output_dir, "residual_psd.png")
   if (!is.null(workflow_output$Y_residuals_final_unwhitened)) {
@@ -60,6 +75,19 @@ ndx_generate_html_report <- function(workflow_output,
     grDevices::dev.off()
   } else {
     psd_png <- NULL
+  }
+
+  # ---- Ljung-Box p-values plot ----
+  ljung_png <- file.path(output_dir, "ljung_box_pvalues.png")
+  if (!is.null(workflow_output$Y_residuals_final_unwhitened)) {
+    lb_p <- compute_ljung_box_pvalues(workflow_output$Y_residuals_final_unwhitened)
+    grDevices::png(ljung_png, width = 600, height = 400)
+    graphics::barplot(lb_p, main = "Ljung-Box p-values",
+                      xlab = "Voxel", ylab = "p-value", ylim = c(0,1))
+    graphics::abline(h = 0.05, col = "red", lty = 2)
+    grDevices::dev.off()
+  } else {
+    ljung_png <- NULL
   }
 
   # ---- Spike carpet plot ----
@@ -131,6 +159,12 @@ ndx_generate_html_report <- function(workflow_output,
     sprintf("<img src='%s' alt='DES per pass'>", basename(des_png)),
     "</div>"
   )
+  html_lines <- c(html_lines,
+    "<div class='section'>",
+    "<h2>Beta Stability Across Runs</h2>",
+    sprintf("<img src='%s' alt='beta stability'>", basename(beta_stab_png)),
+    "</div>"
+  )
 
   # ---- Add PSD section ----
   if (!is.null(psd_png)) {
@@ -138,6 +172,15 @@ ndx_generate_html_report <- function(workflow_output,
       "<div class='section'>",
       "<h2>Residual Power Spectral Density</h2>",
       sprintf("<img src='%s' alt='Residual PSD'>", basename(psd_png)),
+      "</div>"
+    )
+  }
+
+  if (!is.null(ljung_png)) {
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>Ljung-Box p-values</h2>",
+      sprintf("<img src='%s' alt='Ljung-Box p-values'>", basename(ljung_png)),
       "</div>"
     )
   }
@@ -353,7 +396,7 @@ ndx_generate_html_report <- function(workflow_output,
 
 #' Generate "ND-X Certified Clean" JSON Sidecar
 #'
-#' This function creates a JSON file summarizing key diagnostic metrics and
+#' This function creates a JSON file summarizing key diagnostic metrics including beta stability and Ljung-Box whiteness and
 #' adaptive hyperparameters from an ND-X run. The JSON structure follows the
 #' specification described in the ND-X proposal and is intended to be consumed
 #' by downstream tools.
@@ -382,6 +425,8 @@ ndx_generate_json_certificate <- function(workflow_output,
     final_DES = val_or_na(last_diag$DES),
     num_passes_converged = val_or_na(workflow_output$num_passes_completed),
     final_rho_noise_projection = val_or_na(last_diag$rho_noise_projection),
+    final_beta_stability = val_or_na(tail(calculate_beta_stability(workflow_output$beta_history_per_pass),1)),
+    ljung_box_p_median = val_or_na(median(compute_ljung_box_pvalues(workflow_output$Y_residuals_final_unwhitened), na.rm=TRUE)),
     final_adaptive_hyperparameters = list(
       k_rpca_global = val_or_na(last_diag$k_rpca_global),
       num_spectral_sines = val_or_na(last_diag$num_spectral_sines),
