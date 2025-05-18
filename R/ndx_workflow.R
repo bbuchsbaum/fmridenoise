@@ -39,6 +39,9 @@
 #'   - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
 #'   - `pass0_residuals`: Residuals from the initial GLM (Pass 0) for diagnostics.
 #'   - `S_matrix_rpca_final`: Final RPCA sparse matrix for spike visualization.
+#'   - `ljung_box_p`: Ljung-Box p-value of whitened residuals.
+#'   - `num_hrf_clusters`: Effective HRF cluster count from HRF estimation.
+#'   - `annihilation_var_ratio` and `annihilation_verdict` when Annihilation mode is used.
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
 #' @export NDX_Process_Subject
@@ -206,15 +209,17 @@ NDX_Process_Subject <- function(Y_fmri,
     # For now, retain single global HRF estimation logic from Sprint 1.
     if (verbose) message(sprintf("Pass %d: Estimating FIR HRFs...", pass_num))
     estimated_hrfs_raw <- ndx_estimate_initial_hrfs(
-      Y_fmri = Y_fmri, 
-      pass0_residuals = Y_residuals_current, 
-      events = events, 
-      run_idx = run_idx, 
-      TR = TR, 
-      spike_TR_mask = current_overall_spike_TR_mask, 
+      Y_fmri = Y_fmri,
+      pass0_residuals = Y_residuals_current,
+      events = events,
+      run_idx = run_idx,
+      TR = TR,
+      spike_TR_mask = current_overall_spike_TR_mask,
       user_options = opts_hrf
     )
     current_pass_results$estimated_hrfs_per_cluster <- estimated_hrfs_raw # Store for diagnostics
+    current_pass_results$num_hrf_clusters <-
+      attr(estimated_hrfs_raw, "num_effective_clusters") %||% 1L
 
     if (!is.null(estimated_hrfs_raw) && tibble::is_tibble(estimated_hrfs_raw) && nrow(estimated_hrfs_raw) > 0) {
       if (verbose) message(sprintf("  Pass %d: Received %d raw HRF estimates (per cluster/condition).", pass_num, nrow(estimated_hrfs_raw)))
@@ -580,6 +585,19 @@ NDX_Process_Subject <- function(Y_fmri,
     # --- 8. Calculate Diagnostics for this Pass (NDX-9 / NDX-18) ---
     if (verbose) message(sprintf("Pass %d: Calculating diagnostics...", pass_num))
     pass_diagnostics <- list()
+
+    # Ljung-Box whiteness test on residuals
+    whitened_resids <- NULL
+    if (!is.null(ridge_betas_whitened) &&
+        !is.null(current_pass_results$Y_whitened) &&
+        !is.null(current_pass_results$X_whitened)) {
+      whitened_resids <- current_pass_results$Y_whitened -
+        current_pass_results$X_whitened %*% ridge_betas_whitened
+      if (!is.null(current_pass_results$na_mask_whitening)) {
+        whitened_resids <- whitened_resids[!current_pass_results$na_mask_whitening, , drop = FALSE]
+      }
+    }
+    pass_diagnostics$ljung_box_p <- ndx_ljung_box_pval(whitened_resids)
     
     # Calculate DES
     if (!is.null(Y_residuals_current) && !is.null(VAR_BASELINE_FOR_DES)) {
@@ -658,6 +676,7 @@ NDX_Process_Subject <- function(Y_fmri,
     }
 
     pass_diagnostics$k_rpca_global <- current_pass_results$k_rpca_global
+    pass_diagnostics$num_hrf_clusters <- current_pass_results$num_hrf_clusters
     pass_diagnostics$num_spectral_sines <- current_pass_results$num_spectral_sines
     pass_diagnostics$lambda_parallel_noise <- current_pass_results$lambda_parallel_noise
     pass_diagnostics$lambda_perp_signal <- current_pass_results$lambda_perp_signal
@@ -751,9 +770,13 @@ NDX_Process_Subject <- function(Y_fmri,
      spike_TR_mask = current_overall_spike_TR_mask,
      X_full_design_final = current_pass_results$X_full_design, # From last pass
      diagnostics_per_pass = diagnostics_per_pass,
-     beta_history_per_pass = beta_history_per_pass,
-     num_passes_completed = pass_num
+    beta_history_per_pass = beta_history_per_pass,
+    num_passes_completed = pass_num
   )
+
+  last_diag <- diagnostics_per_pass[[pass_num]]
+  final_results$ljung_box_p <- last_diag$ljung_box_p
+  final_results$num_hrf_clusters <- last_diag$num_hrf_clusters
   
   # Add Annihilation Mode specific results if active
   if (opts_annihilation$annihilation_enable_mode) {
@@ -777,6 +800,10 @@ NDX_Process_Subject <- function(Y_fmri,
         r2_vals_by_k = gdlite_initial_results$r2_vals_by_k
       )
     }
+
+    verdict_stats <- ndx_annihilation_verdict_stats(final_results)
+    final_results$annihilation_var_ratio <- verdict_stats$var_ratio
+    final_results$annihilation_verdict <- verdict_stats$verdict
   } else {
     final_results$annihilation_mode_active <- FALSE
   }

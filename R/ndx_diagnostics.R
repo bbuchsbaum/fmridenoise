@@ -354,9 +354,11 @@ ndx_generate_html_report <- function(workflow_output,
 #' Generate "ND-X Certified Clean" JSON Sidecar
 #'
 #' This function creates a JSON file summarizing key diagnostic metrics and
-#' adaptive hyperparameters from an ND-X run. The JSON structure follows the
-#' specification described in the ND-X proposal and is intended to be consumed
-#' by downstream tools.
+#' adaptive hyperparameters from an ND-X run. The resulting JSON includes
+#' fields for the ND-X version, DES, Ljung-Box p-value, the Annihilation verdict
+#' ratio and category, convergence information, and all final adaptive
+#' hyperparameters.
+#' Downstream tools can parse this certificate to verify denoising quality.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
 #' @param output_path File path to save the JSON sidecar. Defaults to
@@ -377,17 +379,25 @@ ndx_generate_json_certificate <- function(workflow_output,
 
   val_or_na <- function(x) if (is.null(x)) NA else x
 
+  verdict_stats <- ndx_annihilation_verdict_stats(workflow_output)
+
   cert_list <- list(
     ndx_version = as.character(utils::packageVersion("ndx")),
     final_DES = val_or_na(last_diag$DES),
-    num_passes_converged = val_or_na(workflow_output$num_passes_completed),
+    ljung_box_p = val_or_na(last_diag$ljung_box_p),
+    var_ratio = val_or_na(verdict_stats$var_ratio),
+    verdict = val_or_na(verdict_stats$verdict),
+    passes_converged = val_or_na(workflow_output$num_passes_completed),
     final_rho_noise_projection = val_or_na(last_diag$rho_noise_projection),
     final_adaptive_hyperparameters = list(
       k_rpca_global = val_or_na(last_diag$k_rpca_global),
+      num_hrf_clusters = val_or_na(last_diag$num_hrf_clusters),
       num_spectral_sines = val_or_na(last_diag$num_spectral_sines),
       lambda_parallel_noise = val_or_na(last_diag$lambda_parallel_noise),
       lambda_perp_signal = val_or_na(last_diag$lambda_perp_signal)
-    )
+    ),
+    timestamp = as.character(Sys.time()),
+    workflow_hash = digest::digest(workflow_output)
   )
 
   jsonlite::write_json(cert_list, output_path, pretty = TRUE, auto_unbox = TRUE)

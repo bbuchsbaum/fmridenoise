@@ -304,3 +304,75 @@ merge_lists <- function(defaults, user) {
   if (is.null(a)) b else a
 }
 
+#' Compute Ljung-Box p-value for Residual Whiteness
+#'
+#' Given a matrix or vector of residuals, this helper collapses the data across
+#' voxels (columns) by averaging and then applies `stats::Box.test` with the
+#' Ljung-Box option to quantify remaining autocorrelation.
+#'
+#' @param residuals Numeric matrix (timepoints x voxels) or vector of residuals.
+#' @param lag Integer lag parameter passed to `stats::Box.test`. Default 5.
+#' @return Numeric p-value from the Ljung-Box test or `NA` if it cannot be
+#'   computed.
+#' @export
+ndx_ljung_box_pval <- function(residuals, lag = 5L) {
+  if (is.null(residuals)) return(NA_real_)
+  if (is.vector(residuals)) {
+    vec <- as.numeric(residuals)
+  } else if (is.matrix(residuals)) {
+    vec <- rowMeans(residuals, na.rm = TRUE)
+  } else {
+    return(NA_real_)
+  }
+
+  vec <- vec[is.finite(vec)]
+  if (length(vec) <= lag) return(NA_real_)
+
+  stats::Box.test(vec, lag = lag, type = "Ljung-Box")$p.value
+}
+
+#' Calculate Annihilation Mode Verdict Statistics
+#'
+#' This utility computes the variance ratio between ND-X unique components and
+#' GLMdenoise components and returns the categorical verdict used throughout the
+#' ND-X diagnostics.
+#'
+#' @param workflow_output List produced by `NDX_Process_Subject` containing the
+#'   matrices `gdlite_pcs`, `rpca_orthogonalized`, and
+#'   `spectral_orthogonalized`.
+#' @return A list with elements `var_ratio` and `verdict`.
+#' @export
+ndx_annihilation_verdict_stats <- function(workflow_output) {
+  if (is.null(workflow_output$gdlite_pcs) ||
+      (is.null(workflow_output$rpca_orthogonalized) &&
+       is.null(workflow_output$spectral_orthogonalized))) {
+    return(list(var_ratio = NA_real_, verdict = NA_character_))
+  }
+
+  var_gd <- sum(workflow_output$gdlite_pcs^2, na.rm = TRUE)
+  var_ndx <- 0
+  if (!is.null(workflow_output$rpca_orthogonalized)) {
+    var_ndx <- var_ndx + sum(workflow_output$rpca_orthogonalized^2, na.rm = TRUE)
+  }
+  if (!is.null(workflow_output$spectral_orthogonalized)) {
+    var_ndx <- var_ndx + sum(workflow_output$spectral_orthogonalized^2, na.rm = TRUE)
+  }
+
+  if (var_gd <= 0) {
+    return(list(var_ratio = NA_real_, verdict = NA_character_))
+  }
+
+  ratio <- var_ndx / var_gd
+  verdict <- if (ratio < 0.1) {
+    "Tie"
+  } else if (ratio < 0.5) {
+    "Win"
+  } else if (ratio < 1.0) {
+    "Decisive Win"
+  } else {
+    "Annihilation"
+  }
+
+  list(var_ratio = ratio, verdict = verdict)
+}
+
