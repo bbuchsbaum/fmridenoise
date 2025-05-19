@@ -304,6 +304,57 @@ merge_lists <- function(defaults, user) {
   if (is.null(a)) b else a
 }
 
+#' Calculate Beta Stability Across Runs
+#'
+#' Computes average pairwise correlations of task beta coefficients across runs
+#' for each pass of the ND-X workflow.
+#'
+#' @param betas_per_pass A list where each element corresponds to a pass and
+#'   contains a list of beta matrices (one per run).
+#' @return Numeric vector of average cross-run correlations for each pass. If a
+#'   pass contains fewer than two runs, the returned value is `NA`.
+#' @export
+calculate_beta_stability <- function(betas_per_pass) {
+  if (!is.list(betas_per_pass) || length(betas_per_pass) == 0) {
+    stop("betas_per_pass must be a non-empty list")
+  }
+  stability <- numeric(length(betas_per_pass))
+  for (i in seq_along(betas_per_pass)) {
+    run_betas <- betas_per_pass[[i]]
+    if (!is.list(run_betas) || length(run_betas) < 2) {
+      stability[i] <- NA_real_
+      next
+    }
+    vecs <- lapply(run_betas, function(b) as.vector(b))
+    cor_vals <- utils::combn(seq_along(vecs), 2, function(idx) {
+      stats::cor(vecs[[idx[1]]], vecs[[idx[2]]], use = "pairwise.complete.obs")
+    })
+    stability[i] <- mean(cor_vals, na.rm = TRUE)
+  }
+  stability
+}
+
+#' Compute Ljung-Box p-values for Residuals
+#'
+#' Applies the Ljung-Box test to each residual time series and returns the
+#' p-values.
+#'
+#' @param residuals Matrix of residuals (timepoints x voxels).
+#' @param lag Number of lags to use in the Ljung-Box test. Default 5.
+#' @return Numeric vector of p-values, one per column of `residuals`.
+#' @export
+compute_ljung_box_pvalues <- function(residuals, lag = 5L) {
+  if (!is.matrix(residuals) || !is.numeric(residuals)) {
+    stop("residuals must be a numeric matrix")
+  }
+  apply(residuals, 2, function(ts) {
+    if (all(is.na(ts))) return(NA_real_)
+    # Ensure there are enough non-NA observations for the test
+    if (sum(!is.na(ts)) <= lag) return(NA_real_)
+    stats::Box.test(ts, lag = lag, type = "Ljung-Box")$p.value
+  })
+}
+
 #' Compute Ljung-Box p-value for Residual Whiteness
 #'
 #' Given a matrix or vector of residuals, this helper collapses the data across
@@ -322,13 +373,22 @@ ndx_ljung_box_pval <- function(residuals, lag = 5L) {
   } else if (is.matrix(residuals)) {
     vec <- rowMeans(residuals, na.rm = TRUE)
   } else {
+    # stop("residuals must be a numeric vector or matrix") # Or handle differently
     return(NA_real_)
   }
 
-  vec <- vec[is.finite(vec)]
-  if (length(vec) <= lag) return(NA_real_)
+  vec <- vec[is.finite(vec)] # Remove NAs and Infs
+  if (length(vec) <= lag) return(NA_real_) # Check after NA removal
 
-  stats::Box.test(vec, lag = lag, type = "Ljung-Box")$p.value
+  # Check for zero variance, which can cause Box.test to fail
+  if (stats::var(vec, na.rm = TRUE) < .Machine$double.eps * 100) return(NA_real_)
+
+  tryCatch({
+    stats::Box.test(vec, lag = lag, type = "Ljung-Box")$p.value
+  }, error = function(e) {
+    warning(paste("Ljung-Box test failed:", e$message))
+    NA_real_
+  })
 }
 
 #' Calculate Annihilation Mode Verdict Statistics
@@ -340,26 +400,33 @@ ndx_ljung_box_pval <- function(residuals, lag = 5L) {
 #' @param workflow_output List produced by `NDX_Process_Subject` containing the
 #'   matrices `gdlite_pcs`, `rpca_orthogonalized`, and
 #'   `spectral_orthogonalized`.
-#' @return A list with elements `var_ratio` and `verdict`.
+#' @return A list with elements `var_ratio` and `verdict`. If necessary inputs
+#'   are missing or variance of GLMdenoise components is zero, returns NA values.
 #' @export
 ndx_annihilation_verdict_stats <- function(workflow_output) {
-  if (is.null(workflow_output$gdlite_pcs) ||
-      (is.null(workflow_output$rpca_orthogonalized) &&
-       is.null(workflow_output$spectral_orthogonalized))) {
+  # Ensure all required components are present
+  required_gdlite <- !is.null(workflow_output$gdlite_pcs)
+  required_ndx_unique <- !is.null(workflow_output$rpca_orthogonalized) ||
+                         !is.null(workflow_output$spectral_orthogonalized)
+
+  if (!required_gdlite || !required_ndx_unique) {
     return(list(var_ratio = NA_real_, verdict = NA_character_))
   }
 
   var_gd <- sum(workflow_output$gdlite_pcs^2, na.rm = TRUE)
+
+  # If GLMdenoise components have zero variance, ratio is undefined or infinite.
+  # Return NA as it's not a meaningful comparison.
+  if (var_gd <= .Machine$double.eps) {
+    return(list(var_ratio = NA_real_, verdict = NA_character_))
+  }
+  
   var_ndx <- 0
   if (!is.null(workflow_output$rpca_orthogonalized)) {
     var_ndx <- var_ndx + sum(workflow_output$rpca_orthogonalized^2, na.rm = TRUE)
   }
   if (!is.null(workflow_output$spectral_orthogonalized)) {
     var_ndx <- var_ndx + sum(workflow_output$spectral_orthogonalized^2, na.rm = TRUE)
-  }
-
-  if (var_gd <= 0) {
-    return(list(var_ratio = NA_real_, verdict = NA_character_))
   }
 
   ratio <- var_ndx / var_gd
@@ -369,7 +436,7 @@ ndx_annihilation_verdict_stats <- function(workflow_output) {
     "Win"
   } else if (ratio < 1.0) {
     "Decisive Win"
-  } else {
+  } else { # ratio >= 1.0
     "Annihilation"
   }
 

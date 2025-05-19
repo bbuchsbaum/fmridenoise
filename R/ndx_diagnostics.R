@@ -355,9 +355,11 @@ ndx_generate_html_report <- function(workflow_output,
 #'
 #' This function creates a JSON file summarizing key diagnostic metrics and
 #' adaptive hyperparameters from an ND-X run. The resulting JSON includes
-#' fields for the ND-X version, DES, Ljung-Box p-value, the Annihilation verdict
-#' ratio and category, convergence information, and all final adaptive
-#' hyperparameters.
+#' fields for the ND-X version, final Denoising Efficacy Score (DES),
+#' final beta stability, Ljung-Box p-value (from final pass), median Ljung-Box
+#' p-value (from final unwhitened residuals), the Annihilation verdict
+#' ratio and category (if applicable), convergence information (number of passes),
+#' final rho noise projection, and all final adaptive hyperparameters.
 #' Downstream tools can parse this certificate to verify denoising quality.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
@@ -389,6 +391,8 @@ ndx_generate_json_certificate <- function(workflow_output,
     verdict = val_or_na(verdict_stats$verdict),
     passes_converged = val_or_na(workflow_output$num_passes_completed),
     final_rho_noise_projection = val_or_na(last_diag$rho_noise_projection),
+    final_beta_stability = val_or_na(tail(calculate_beta_stability(workflow_output$beta_history_per_pass),1)),
+    ljung_box_p_median = val_or_na(median(compute_ljung_box_pvalues(workflow_output$Y_residuals_final_unwhitened), na.rm=TRUE)),
     final_adaptive_hyperparameters = list(
       k_rpca_global = val_or_na(last_diag$k_rpca_global),
       num_hrf_clusters = val_or_na(last_diag$num_hrf_clusters),
