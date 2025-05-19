@@ -10,7 +10,8 @@ ndx_gcv_tune_lambda_parallel(Y_whitened, X_whitened, P_Noise,
 \arguments{
 \item{Y_whitened}{Whitened responses.}
 \item{X_whitened}{Whitened design.}
-\item{P_Noise}{Noise projection matrix.}
+\item{P_Noise}{Noise projection matrix. May be \code{NULL} if no noise
+  subspace is supplied.}
 \item{lambda_grid}{Candidate lambda values.}
 \item{lambda_ratio}{Multiplier for perpendicular lambda.}
 }

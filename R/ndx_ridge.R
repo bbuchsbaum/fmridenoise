@@ -49,11 +49,17 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
                                          lambda_ratio = 0.05) {
   n <- nrow(X_whitened)
   I_reg <- diag(1, ncol(X_whitened))
-  P_Signal <- I_reg - P_Noise
+  if (is.null(P_Noise)) {
+    diag_noise <- rep(0, ncol(X_whitened))
+    P_Signal <- I_reg
+  } else {
+    diag_noise <- diag(P_Noise)
+    P_Signal <- I_reg - P_Noise
+  }
   best_lambda <- lambda_grid[1]
   best_gcv <- Inf
   for (lam in lambda_grid) {
-    K_diag <- lam * diag(P_Noise) + (lam * lambda_ratio) * diag(P_Signal)
+    K_diag <- lam * diag_noise + (lam * lambda_ratio) * diag(P_Signal)
     XtX <- crossprod(X_whitened)
     XtX_pen <- XtX
     diag(XtX_pen) <- diag(XtX_pen) + pmax(K_diag, .Machine$double.eps)

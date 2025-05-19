@@ -17,3 +17,11 @@ test_that("ndx_solve_anisotropic_ridge performs GCV tuning", {
     res_var_scale = res_var)
   expect_equal(dim(betas), c(2,1))
 })
+
+test_that("ndx_gcv_tune_lambda_parallel handles NULL P_Noise", {
+  data <- .create_ridge_test_data(30, 2, 1, c(1, -1), noise_sd = 0.2)
+  lam <- ndx_gcv_tune_lambda_parallel(data$Y, data$X, NULL,
+                                      lambda_grid = c(0.1, 1), lambda_ratio = 0.1)
+  expect_true(is.numeric(lam) && length(lam) == 1)
+  expect_true(lam %in% c(0.1, 1))
+})
