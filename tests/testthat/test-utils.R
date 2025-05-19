@@ -236,3 +236,57 @@ test_that("ndx_orthogonalize_matrix_against_basis handles empty basis", {
   expect_equal(ndx_orthogonalize_matrix_against_basis(target, NULL), target)
   expect_equal(ndx_orthogonalize_matrix_against_basis(target, matrix(numeric(0), nrow = 4)), target)
 })
+
+test_that("ndx_annihilation_verdict_stats computes ratios and verdicts", {
+  base_workflow <- list(
+    gdlite_pcs = matrix(1, 1, 1),
+    rpca_orthogonalized = matrix(0, 1, 1),
+    spectral_orthogonalized = matrix(0, 1, 1)
+  )
+
+  tie_wf <- base_workflow
+  tie_wf$rpca_orthogonalized <- matrix(sqrt(0.05), 1, 1)
+  res <- ndx_annihilation_verdict_stats(tie_wf)
+  expect_equal(res$var_ratio, 0.05, tolerance = 1e-8)
+  expect_equal(res$verdict, "Tie")
+
+  win_wf <- base_workflow
+  win_wf$rpca_orthogonalized <- matrix(sqrt(0.2), 1, 1)
+  res <- ndx_annihilation_verdict_stats(win_wf)
+  expect_equal(res$var_ratio, 0.2, tolerance = 1e-8)
+  expect_equal(res$verdict, "Win")
+
+  decis_wf <- base_workflow
+  decis_wf$rpca_orthogonalized <- matrix(sqrt(0.6), 1, 1)
+  res <- ndx_annihilation_verdict_stats(decis_wf)
+  expect_equal(res$var_ratio, 0.6, tolerance = 1e-8)
+  expect_equal(res$verdict, "Decisive Win")
+
+  ann_wf <- base_workflow
+  ann_wf$rpca_orthogonalized <- matrix(sqrt(1.5), 1, 1)
+  res <- ndx_annihilation_verdict_stats(ann_wf)
+  expect_equal(res$var_ratio, 1.5, tolerance = 1e-8)
+  expect_equal(res$verdict, "Annihilation")
+})
+
+test_that("ndx_annihilation_verdict_stats handles missing data", {
+  res <- ndx_annihilation_verdict_stats(list(gdlite_pcs = NULL))
+  expect_true(is.na(res$var_ratio))
+  expect_true(is.na(res$verdict))
+
+  res <- ndx_annihilation_verdict_stats(list(
+    gdlite_pcs = matrix(0, 1, 1),
+    rpca_orthogonalized = NULL,
+    spectral_orthogonalized = NULL
+  ))
+  expect_true(is.na(res$var_ratio))
+  expect_true(is.na(res$verdict))
+
+  res <- ndx_annihilation_verdict_stats(list(
+    gdlite_pcs = matrix(0, 1, 1),
+    rpca_orthogonalized = matrix(1, 1, 1),
+    spectral_orthogonalized = NULL
+  ))
+  expect_true(is.na(res$var_ratio))
+  expect_true(is.na(res$verdict))
+})
