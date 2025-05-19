@@ -310,8 +310,18 @@ NDX_Process_Subject <- function(Y_fmri,
       }
       current_pass_results$S_matrix_rpca <- rpca_out$S_matrix_cat # Store S matrix
       current_pass_results$V_global_singular_values_from_rpca <- rpca_out$V_global_singular_values # Store for next pass
-      current_pass_results$precision_weights <- ndx_precision_weights_from_S(rpca_out$S_matrix_cat)
-      precision_weights_for_pass <- current_pass_results$precision_weights
+
+      if (!is.null(rpca_out$S_matrix_cat) &&
+          is.matrix(rpca_out$S_matrix_cat) &&
+          is.numeric(rpca_out$S_matrix_cat)) {
+        current_pass_results$precision_weights <-
+          ndx_precision_weights_from_S(rpca_out$S_matrix_cat)
+        precision_weights_for_pass <- current_pass_results$precision_weights
+      } else {
+        if (verbose) message("    RPCA did not return a valid numeric S matrix; skipping precision weighting for this pass.")
+        current_pass_results$precision_weights <- NULL
+        precision_weights_for_pass <- NULL
+      }
     } else {
       if (verbose && !is.null(rpca_out)) {
           message("    Warning: rpca_out from ndx_rpca_temporal_components_multirun was not NULL but not a list as expected.")

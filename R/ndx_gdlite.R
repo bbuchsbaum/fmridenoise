@@ -778,7 +778,13 @@ ndx_run_gdlite <- function(Y_fmri,
   
   # Baseline model (polynomials per run, and run-specific intercepts if poly_degree allows)
   # fmrireg::baseline_model with basis="poly" and degree=poly_degree handles run intercepts correctly.
-  baseline_des <- fmrireg::baseline_model(sframe = sf, basis = "poly", degree = poly_degree, nuisance_list = list())
+  # No nuisance regressors are included at this stage, so rely on the
+  # default `nuisance_list = NULL` behavior. Passing an empty list would
+  # cause an error inside `fmrireg::baseline_model` because it expects the
+  # list length and row counts to match the sampling frame.
+  baseline_des <- fmrireg::baseline_model(sframe = sf,
+                                          basis = "poly",
+                                          degree = poly_degree)
   X_poly_intercepts <- fmrireg::design_matrix(baseline_des)
   if (is.null(X_poly_intercepts)) X_poly_intercepts <- matrix(1, nrow=n_timepoints, ncol=1)
 
