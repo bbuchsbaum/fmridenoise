@@ -797,6 +797,8 @@ ndx_run_gdlite <- function(Y_fmri,
     }
   }
   X_gd <- do.call(cbind, X_gd_parts)
+  X_gd <- as.matrix(X_gd)
+  storage.mode(X_gd) <- "numeric"
   if (any(duplicated(colnames(X_gd)))) {
       colnames(X_gd) <- make.names(colnames(X_gd), unique=TRUE)
   }

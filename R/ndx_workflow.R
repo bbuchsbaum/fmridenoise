@@ -484,22 +484,24 @@ NDX_Process_Subject <- function(Y_fmri,
           noise_rpca_unique_col_indices <- which(is_rpca_unique_col)
           noise_spectral_unique_col_indices <- which(is_spectral_unique_col)
 
+          I_reg <- diag(1, n_regressors)
+
           U_noise <- NULL
           if (length(noise_rpca_col_indices) > 0)
-            U_noise <- cbind(U_noise, current_pass_results$X_whitened[, noise_rpca_col_indices, drop = FALSE])
+            U_noise <- cbind(U_noise, I_reg[, noise_rpca_col_indices, drop = FALSE])
           if (length(noise_spectral_col_indices) > 0)
-            U_noise <- cbind(U_noise, current_pass_results$X_whitened[, noise_spectral_col_indices, drop = FALSE])
+            U_noise <- cbind(U_noise, I_reg[, noise_spectral_col_indices, drop = FALSE])
 
           U_gd <- NULL
           if (opts_annihilation$annihilation_enable_mode && length(noise_gdlite_col_indices) > 0)
-            U_gd <- current_pass_results$X_whitened[, noise_gdlite_col_indices, drop = FALSE]
+            U_gd <- I_reg[, noise_gdlite_col_indices, drop = FALSE]
 
           U_unique <- NULL
           if (opts_annihilation$annihilation_enable_mode) {
             if (length(noise_rpca_unique_col_indices) > 0)
-              U_unique <- cbind(U_unique, current_pass_results$X_whitened[, noise_rpca_unique_col_indices, drop = FALSE])
+              U_unique <- cbind(U_unique, I_reg[, noise_rpca_unique_col_indices, drop = FALSE])
             if (length(noise_spectral_unique_col_indices) > 0)
-              U_unique <- cbind(U_unique, current_pass_results$X_whitened[, noise_spectral_unique_col_indices, drop = FALSE])
+              U_unique <- cbind(U_unique, I_reg[, noise_spectral_unique_col_indices, drop = FALSE])
           }
 
           proj_mats <- ndx_compute_projection_matrices(U_GD = U_gd, U_Unique = U_unique,
