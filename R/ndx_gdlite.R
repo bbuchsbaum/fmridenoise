@@ -767,11 +767,12 @@ ndx_run_gdlite <- function(Y_fmri,
   # GLMdenoise typically uses Glover + time derivative + dispersion derivative.
   # For simplicity, starting with spmg1 (like ndx_initial_glm).
   # This could be a parameter: hrf_basis = "spmg1" or "glover_derivs"
-  task_model_formula <- stats::as.formula(paste0("~ fmrireg::hrf(", 
-                                          paste(unique(events$condition), collapse=" + "),
-                                          ", basis=\"spmg1\")"))
-  
-  event_des <- fmrireg::event_model(task_model_formula, data = events, block = events$blockids, sampling_frame = sf)
+  task_model_formula <- stats::as.formula("onsets ~ fmrireg::hrf(condition, basis='spmg1')")
+
+  event_des <- fmrireg::event_model(task_model_formula,
+                                    data = events,
+                                    block = events$blockids,
+                                    sampling_frame = sf)
   X_task <- fmrireg::design_matrix(event_des)
   if (is.null(X_task)) X_task <- matrix(0, nrow=n_timepoints, ncol=0)
   
