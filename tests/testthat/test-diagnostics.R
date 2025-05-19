@@ -20,6 +20,13 @@ workflow_mock <- list(
       ljung_box_p = 0.6
     )
   ),
+  betas_per_pass = list(
+    matrix(rnorm(n_vox * n_vox), n_vox, n_vox)
+  ),
+  beta_history_per_pass = list(
+    matrix(rnorm(n_time * n_vox), n_time, n_vox),
+    matrix(rnorm(n_time * n_vox), n_time, n_vox)
+  ),
   num_passes_completed = 2,
   S_matrix_rpca_final = matrix(0, n_time, n_vox)
 )
