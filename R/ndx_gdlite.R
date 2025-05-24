@@ -648,8 +648,34 @@ select_optimal_k_gdlite <- function(Y_fmri,
   }
 
   if (all(is.infinite(median_r2cv_values)) || all(is.na(median_r2cv_values))) {
-      warning("All median R2cv values were -Inf or NA. Cannot determine optimal K. Defaulting to K_star = 0.")
-      K_star <- 0
+      warning("All median R2cv values were -Inf or NA. Cannot determine optimal K using R2cv.")
+      # Fallback for K_star selection when R2cv is not informative (e.g. single run)
+      if (getOption("fmridenoise.verbose_gdlite", FALSE)) {
+          message(sprintf("  Attempting fallback K_star selection. k_values_tested range: %d to %d. Actual extracted PCs: %d", 
+                          min_K, K_max, if(is.null(all_pcs)) 0 else ncol(all_pcs)))
+      }
+      if (!is.null(all_pcs) && ncol(all_pcs) > 0) {
+          # If min_K_optimal_selection is > 0 and <= available PCs, use it.
+          # Otherwise, pick a small number, e.g., 1, if available.
+          if (min_K > 0 && min_K <= ncol(all_pcs)) {
+              K_star <- min_K
+              if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Fallback K_star: Set to min_K = %d", K_star))
+          } else if (ncol(all_pcs) >= 1) {
+              K_star <- 1L # Fallback to 1 PC if available and min_K was 0 or too high
+              if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Fallback K_star: Set to 1 (min_K was %d)", min_K))
+          } else {
+              K_star <- 0 # No PCs available
+              if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Fallback K_star: No candidate PCs available, set to 0.")
+          }
+          # Ensure K_star does not exceed K_max (actual number of PCs extracted)
+          if (!is.null(all_pcs)) K_star <- min(K_star, ncol(all_pcs))
+          
+      } else {
+          K_star <- 0 # No candidate PCs to select from
+          if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Fallback K_star: No candidate PCs provided, set to 0.")
+      }
+      if (K_star == 0) warning("Fallback K_star selection resulted in K_star = 0.")
+      
   } else {
       best_loop_idx <- which.max(median_r2cv_values)
       if (length(best_loop_idx) > 1) best_loop_idx <- best_loop_idx[1] # Pick first if multiple maxima
@@ -811,18 +837,21 @@ ndx_run_gdlite <- function(Y_fmri,
   # --- Step 2: Initial LORO R-squared --- 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 2: Calculating initial LORO R-squared (r2_cv_initial)...")
   r2_cv_initial <- cv_r2_loro(Y_fmri, X_gd, run_idx)
+  is_single_run_or_cv_failed <- all(is.na(r2_cv_initial)) # Check if LORO CV returned all NAs
 
   # --- Step 3: Calculate tSNR --- 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 3: Calculating tSNR...")
-  # GLMdenoise often calculates tSNR on data *after* removing trends (i.e. from residuals of a model with only trends/intercepts)
-  # or on the raw data if it's already reasonably clean or filtered.
-  # For now, using Y_fmri with optional detrending as per function's default.
   tsnr_values <- calculate_tsnr(Y_fmri, detrend = detrend_for_tsnr)
   tsnr_values[is.na(tsnr_values)] <- 0 # Replace NA tSNR with 0 for mask creation
 
   # --- Step 4: Define Noise Pool Mask --- 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 4: Defining noise pool mask...")
-  noise_pool_mask <- (r2_cv_initial < r2_thresh_noise_pool) & (tsnr_values > tsnr_thresh_noise_pool)
+  if (is_single_run_or_cv_failed) {
+    if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Single run or LORO CV failed, using only TSNR for noise pool definition.")
+    noise_pool_mask <- (tsnr_values > tsnr_thresh_noise_pool)
+  } else {
+    noise_pool_mask <- (r2_cv_initial < r2_thresh_noise_pool) & (tsnr_values > tsnr_thresh_noise_pool)
+  }
   noise_pool_mask[is.na(noise_pool_mask)] <- FALSE # Ensure no NAs in mask
   if (sum(noise_pool_mask) == 0) {
     warning("Noise pool mask is empty (0 voxels). PCA will not be performed. Returning K_star=0.")
@@ -878,12 +907,18 @@ ndx_run_gdlite <- function(Y_fmri,
 
   # --- Step 6: Define Good Voxel Mask for K selection --- 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 6: Defining good voxel mask for K selection...")
-  good_voxel_mask_for_k_selection <- (r2_cv_initial >= r2_thresh_good_voxels)
-  good_voxel_mask_for_k_selection[is.na(good_voxel_mask_for_k_selection)] <- FALSE # Ensure no NAs
-  if (sum(good_voxel_mask_for_k_selection) == 0) {
-      warning("Good voxel mask for K selection is empty. Optimal K selection may not be reliable. Defaulting to K_star=0.")
-      # If no good voxels, select_optimal_k_gdlite already handles this and returns K_star=0
+  if (is_single_run_or_cv_failed) {
+    if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Single run or LORO CV failed, using all voxels (if any) or TSNR > 0 for good voxel K selection mask.")
+    # Fallback for good voxels: use those with TSNR > 0 or simply all voxels if TSNR is also problematic
+    good_voxel_mask_for_k_selection <- tsnr_values > 0 
+    if (sum(good_voxel_mask_for_k_selection) == 0 && n_voxels > 0) { # If TSNR > 0 yields nothing, take all non-NA TSNR voxels
+        good_voxel_mask_for_k_selection <- !is.na(tsnr_values) & tsnr_values != 0 # Avoid all-zero tsnr if possible
+         if (sum(good_voxel_mask_for_k_selection) == 0 && n_voxels > 0) good_voxel_mask_for_k_selection <- rep(TRUE, n_voxels) # Absolute fallback
+    }
+  } else {
+    good_voxel_mask_for_k_selection <- (r2_cv_initial >= r2_thresh_good_voxels)
   }
+  good_voxel_mask_for_k_selection[is.na(good_voxel_mask_for_k_selection)] <- FALSE # Ensure no NAs
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Good voxel mask for K selection defined with %d voxels.", sum(good_voxel_mask_for_k_selection)))
 
   # --- Step 7: Select Optimal K_star --- 

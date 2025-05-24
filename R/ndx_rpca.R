@@ -150,11 +150,28 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
     run_name <- names(Y_residuals_list)[r_idx]
     Er <- Y_residuals_list[[r_idx]] # Time_r x Voxels
     
+    # Initialize spike mask for this run to all FALSE.
+    # This ensures it's populated even if later steps fail for this run.
+    # Also ensures it has an entry if a run is skipped early.
+    if (nrow(Er) > 0) {
+        per_run_spike_TR_masks[[run_name]] <- rep(FALSE, nrow(Er))
+    } else {
+        # If Er is empty, the mask should also be empty for unlist to work correctly later
+        # Or handle this case specifically where Y_residuals_list has 0-row entries.
+        # For now, if Er has 0 rows, this run will likely be skipped anyway.
+        # Let's assume nrow(Er) > 0 if we reach here for spike mask generation.
+        # The existing check below handles empty Er for RPCA itself.
+    }
+    
     if (nrow(Er) == 0 || ncol(Er) == 0) {
         warning(sprintf("Residuals for run %s are empty (dims: %s). Skipping RPCA for this run.", 
                         run_name, paste(dim(Er), collapse="x")))
         V_list[[run_name]] <- NULL # Placeholder for potential later filtering
         glitch_ratios_per_run[run_name] <- NA
+        # per_run_spike_TR_masks[[run_name]] already set to FALSE vector of length nrow(Er) if nrow(Er) > 0
+        # or remains NULL if nrow(Er) was 0 (which unlist handles by skipping)
+        # To be safe, if nrow(Er) == 0, assign logical(0)
+        if (nrow(Er) == 0) per_run_spike_TR_masks[[run_name]] <- logical(0)
         next
     }
     
@@ -290,9 +307,12 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
     }
 
     # Spike TR mask for this run using median |S| across voxels
-    if (!is.null(S_r_t) && length(S_r_t) > 0) {
+    if (!is.null(S_r_t) && length(S_r_t) > 0 && sum(abs(S_r_t), na.rm = TRUE) > 1e-9) {
+      # Only update if S_r_t is valid and non-zero
       if (sum(abs(S_r_t), na.rm = TRUE) < 1e-9) {
-        spike_TR_mask_run <- rep(FALSE, ncol(S_r_t))
+        # This condition is a bit redundant due to the outer if, but safe
+        # spike_TR_mask_run <- rep(FALSE, ncol(S_r_t)) # ncol(S_r_t) is Time_r
+        # per_run_spike_TR_masks[[run_name]] <- as.logical(spike_TR_mask_run) # Stays FALSE
       } else {
         s_t_star_run <- apply(abs(S_r_t), 2, stats::median, na.rm = TRUE)
         mad_s_t_star <- stats::mad(s_t_star_run, constant = 1, na.rm = TRUE)
@@ -305,11 +325,15 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
             current_opts$rpca_spike_mad_thresh * mad_s_t_star
         }
         spike_TR_mask_run <- s_t_star_run > thresh_val
+        if (length(spike_TR_mask_run) == nrow(Er)) { # Ensure correct length
+             per_run_spike_TR_masks[[run_name]] <- as.logical(spike_TR_mask_run)
+        } else {
+            warning(sprintf("Run %s: Generated spike_TR_mask_run length (%d) did not match TRs for run (%d). Using all FALSEs.", 
+                            run_name, length(spike_TR_mask_run), nrow(Er)))
+            # per_run_spike_TR_masks[[run_name]] remains rep(FALSE, nrow(Er))
+        }
       }
-      per_run_spike_TR_masks[[run_name]] <- as.logical(spike_TR_mask_run)
-    } else {
-      per_run_spike_TR_masks[[run_name]] <- rep(FALSE, nrow(Er))
-    }
+    } # else, it remains the pre-initialized rep(FALSE, nrow(Er))
 
     # After S_r_t <- rpca_res_r$S and L_r_t <- rpca_res_r$L
     if (!is.null(S_r_t)) {

@@ -34,7 +34,8 @@ test_that("NDX_Process_Subject propagates spike mask and detects spikes", {
       cv_folds = 2,
       hrf_min_good_voxels = 1,
       hrf_cluster_method = "none",
-      num_hrf_clusters = 1
+      num_hrf_clusters = 1,
+      hrf_min_events_for_fir = 2
     ),
     opts_rpca = list(
       k_global_target = 2,
@@ -74,7 +75,7 @@ test_that("NDX_Process_Subject produces gdlite PCs in annihilation mode", {
   TR_test <- 2.0
   n_time <- 40
   n_voxels <- 5
-  Y_fmri <- matrix(rnorm(n_time * n_voxels), nrow = n_time, ncol = n_voxels)
+  Y_fmri <- matrix(rnorm(n_time * n_voxels, mean = 5, sd = 1), nrow = n_time, ncol = n_voxels)
   run_idx <- rep(1, n_time)
   motion_params <- matrix(0, nrow = n_time, ncol = 2)
   colnames(motion_params) <- paste0("mot", 1:2)
@@ -97,7 +98,8 @@ test_that("NDX_Process_Subject produces gdlite PCs in annihilation mode", {
       cv_folds = 2,
       hrf_min_good_voxels = 1,
       hrf_cluster_method = "none",
-      num_hrf_clusters = 1
+      num_hrf_clusters = 1,
+      hrf_min_events_for_fir = 1
     ),
     opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1),
     opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.1),
@@ -106,7 +108,8 @@ test_that("NDX_Process_Subject produces gdlite PCs in annihilation mode", {
     opts_annihilation = list(
       annihilation_enable_mode = TRUE,
       annihilation_gdlite_k_max = 2,
-      annihilation_gdlite_tsnr_thresh_noise_pool = 0,
+      annihilation_gdlite_tsnr_thresh_noise_pool = -Inf,
+      annihilation_gdlite_r2_thresh_noise_pool = Inf,
       min_K_optimal_selection = 1
     ),
     max_passes = 1,
@@ -137,7 +140,7 @@ test_that("NDX_Process_Subject generates orthogonalized components with correct 
   TR_test <- 2.0
   n_time <- 40
   n_voxels <- 4
-  Y_fmri <- matrix(rnorm(n_time * n_voxels), nrow = n_time, ncol = n_voxels)
+  Y_fmri <- matrix(rnorm(n_time * n_voxels, mean = 5, sd = 1), nrow = n_time, ncol = n_voxels)
   run_idx <- rep(1, n_time)
   motion_params <- matrix(0, nrow = n_time, ncol = 2)
   colnames(motion_params) <- paste0("mot", 1:2)
@@ -160,7 +163,8 @@ test_that("NDX_Process_Subject generates orthogonalized components with correct 
       cv_folds = 2,
       hrf_min_good_voxels = 1,
       hrf_cluster_method = "none",
-      num_hrf_clusters = 1
+      num_hrf_clusters = 1,
+      hrf_min_events_for_fir = 1
     ),
     opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1),
     opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.1),
@@ -169,7 +173,8 @@ test_that("NDX_Process_Subject generates orthogonalized components with correct 
     opts_annihilation = list(
       annihilation_enable_mode = TRUE,
       annihilation_gdlite_k_max = 2,
-      annihilation_gdlite_tsnr_thresh_noise_pool = 0,
+      annihilation_gdlite_tsnr_thresh_noise_pool = -Inf,
+      annihilation_gdlite_r2_thresh_noise_pool = Inf,
       min_K_optimal_selection = 1
     ),
     max_passes = 1,
