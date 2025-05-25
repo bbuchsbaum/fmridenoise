@@ -186,8 +186,17 @@ test_that("Input validation for ndx_ar2_whitening", {
     Y_too_short <- matrix(rnorm(2*2), 2, 2)
     X_too_short <- matrix(rnorm(2*3), 2, 3)
     Y_res_too_short <- matrix(rnorm(2*2), 2, 2)
-    expect_error(ndx_ar2_whitening(Y_too_short, X_too_short, Y_res_too_short, order = 2L), 
+    expect_error(ndx_ar2_whitening(Y_too_short, X_too_short, Y_res_too_short, order = 2L),
                  regexp = "Number of timepoints \\(2\\) must be greater than AR order \\(2\\)\\.")
+
+    weights_neg <- matrix(-1, nrow = 100, ncol = 2)
+    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_good, weights = weights_neg),
+                 "weights must contain finite, non-negative numbers")
+
+    weights_inf <- matrix(1, nrow = 100, ncol = 2)
+    weights_inf[1,1] <- Inf
+    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_good, weights = weights_inf),
+                 "weights must contain finite, non-negative numbers")
 }) 
 
 test_that("ndx_ar2_whitening effectively whitens AR(2) noise", {

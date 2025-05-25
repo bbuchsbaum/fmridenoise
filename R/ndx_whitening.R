@@ -87,6 +87,9 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
         nrow(weights) != n_timepoints || ncol(weights) != n_voxels) {
       stop("weights must be a numeric matrix with dimensions matching Y_data")
     }
+    if (any(!is.finite(weights)) || any(weights < 0)) {
+      stop("weights must contain finite, non-negative numbers")
+    }
   }
 
   AR_coeffs_voxelwise <- matrix(NA_real_, nrow = n_voxels, ncol = order)
