@@ -37,7 +37,7 @@ If NULL, all TRs are considered valid initially.}
 - `opts_hrf`: List of options for `ndx_estimate_initial_hrfs` (e.g., `hrf_fir_taps`, `good_voxel_R2_threshold`, `lambda1_grid`, `lambda2_grid`, `cv_folds`).
 - `opts_rpca`: List of options for `ndx_rpca_temporal_components_multirun` (e.g., `k_per_run_target`, `rpca_lambda_auto`).
 - `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
-- `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
+  - `opts_whitening`: List of options for `ndx_ar_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
 - `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
 - `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
 - `max_passes` (integer): Maximum number of iterations for the refinement loop. Default: 3.

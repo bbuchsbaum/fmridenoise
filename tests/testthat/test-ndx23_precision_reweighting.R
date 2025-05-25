@@ -22,10 +22,10 @@ test_that("S-based precision weights improve robustness to spikes", {
   S_mat[spike_idx, 1] <- 10
   weights_mat <- ndx_precision_weights_from_S(S_mat)
 
-  res_unw <- ndx_ar2_whitening(Y_mat, X, Y_mat, order = 2,
+  res_unw <- ndx_ar_whitening(Y_mat, X, Y_mat, order = 2,
                                global_ar_on_design = FALSE,
                                verbose = FALSE)
-  res_w <- ndx_ar2_whitening(Y_mat, X, Y_mat, order = 2,
+  res_w <- ndx_ar_whitening(Y_mat, X, Y_mat, order = 2,
                              global_ar_on_design = FALSE,
                              weights = weights_mat,
                              verbose = FALSE)

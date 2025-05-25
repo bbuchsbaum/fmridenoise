@@ -1,13 +1,13 @@
-#' AR(2) Pre-whitening for fMRI Data
+#' AR Pre-whitening for fMRI Data
 #'
-#' Estimates AR(2) model coefficients voxel-wise from provided residuals and applies
+#' Estimates AR model coefficients voxel-wise from provided residuals and applies
 #' the whitening transformation to the fMRI data and the design matrix.
 #'
 #' @param Y_data A numeric matrix (timepoints x voxels) of fMRI data to be whitened.
 #' @param X_design_full A numeric matrix (timepoints x regressors) representing the
 #'   full design matrix to be whitened.
 #' @param Y_residuals_for_AR_fit A numeric matrix (timepoints x voxels) of residuals
-#'   used to estimate the AR(2) coefficients. This should typically be from a model
+#'   used to estimate the AR coefficients. This should typically be from a model
 #'   that accounts for task effects and other known structured noise components.
 #' @param order Integer, the order of the AR model. Defaults to 2 for AR(2).
 #' @param global_ar_on_design Logical, if TRUE (default), a global AR model (averaged from successful
@@ -45,7 +45,7 @@
 #'
 #' @import stats
 #' @export
-ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
+ndx_ar_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
                               order = 2L, global_ar_on_design = TRUE,
                               verbose = TRUE, weights = NULL) {
 

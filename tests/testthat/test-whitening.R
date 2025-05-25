@@ -1,4 +1,4 @@
-context("ndx_ar2_whitening - Functionality")
+context("ndx_ar_whitening - Functionality")
 
 # Helper function to generate AR(order) data
 .generate_ar_data <- function(n_timepoints, ar_coeffs, innov_sd = 1.0, burn_in = 100) {
@@ -14,7 +14,7 @@ context("ndx_ar2_whitening - Functionality")
   return(list(series = series[(burn_in + 1):total_points], innovations = innovations[(burn_in + 1):total_points]))
 }
 
-test_that("ndx_ar2_whitening estimates AR(2) coeffs and whitens Y_data correctly", {
+test_that("ndx_ar_whitening estimates AR(2) coeffs and whitens Y_data correctly", {
   set.seed(123)
   n_voxels <- 2
   n_timepoints <- 200
@@ -41,7 +41,7 @@ test_that("ndx_ar2_whitening estimates AR(2) coeffs and whitens Y_data correctly
 
   whitening_results <- NULL
   expect_no_error({
-    whitening_results <- ndx_ar2_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, order = ar_order)
+    whitening_results <- ndx_ar_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, order = ar_order)
   })
   
   expect_true(is.list(whitening_results))
@@ -103,7 +103,7 @@ test_that("ndx_ar2_whitening estimates AR(2) coeffs and whitens Y_data correctly
   }
 })
 
-test_that("ndx_ar2_whitening handles failed AR fits gracefully", {
+test_that("ndx_ar_whitening handles failed AR fits gracefully", {
   set.seed(456)
   n_voxels <- 2
   n_timepoints <- 100
@@ -120,7 +120,7 @@ test_that("ndx_ar2_whitening handles failed AR fits gracefully", {
   Y_residuals_for_AR_fit_sim <- cbind(ar_data1$series, zero_var_residuals)
   X_design_sim <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
 
-  whitening_results <- ndx_ar2_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, order = ar_order)
+  whitening_results <- ndx_ar_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, order = ar_order)
 
   # Check AR_coeffs_voxelwise for the failed voxel
   expect_equal(whitening_results$AR_coeffs_voxelwise[2, ], c(0,0), 
@@ -142,7 +142,7 @@ test_that("ndx_ar2_whitening handles failed AR fits gracefully", {
 })
 
 
-test_that("ndx_ar2_whitening with global_ar_on_design = FALSE", {
+test_that("ndx_ar_whitening with global_ar_on_design = FALSE", {
   set.seed(789)
   n_voxels <- 1
   n_timepoints <- 50
@@ -154,7 +154,7 @@ test_that("ndx_ar2_whitening with global_ar_on_design = FALSE", {
   Y_residuals_for_AR_fit_sim <- Y_data_sim
   X_design_sim <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
 
-  whitening_results <- ndx_ar2_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, 
+  whitening_results <- ndx_ar_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, 
                                         order = ar_order, global_ar_on_design = FALSE)
   
   expect_true(is.list(whitening_results))
@@ -164,40 +164,40 @@ test_that("ndx_ar2_whitening with global_ar_on_design = FALSE", {
   expect_true(!is.null(whitening_results$Y_whitened)) # Y_whitened should still be processed
 })
 
-test_that("Input validation for ndx_ar2_whitening", {
+test_that("Input validation for ndx_ar_whitening", {
     Y_good <- matrix(rnorm(100*2), 100, 2)
     X_good <- matrix(rnorm(100*3), 100, 3)
     Y_res_good <- matrix(rnorm(100*2), 100, 2)
 
-    expect_error(ndx_ar2_whitening(as.data.frame(Y_good), X_good, Y_res_good), "Y_data must be a numeric matrix.")
-    expect_error(ndx_ar2_whitening(Y_good, as.data.frame(X_good), Y_res_good), "X_design_full must be a numeric matrix.")
-    expect_error(ndx_ar2_whitening(Y_good, X_good, as.data.frame(Y_res_good)), "Y_residuals_for_AR_fit must be a numeric matrix.")
+    expect_error(ndx_ar_whitening(as.data.frame(Y_good), X_good, Y_res_good), "Y_data must be a numeric matrix.")
+    expect_error(ndx_ar_whitening(Y_good, as.data.frame(X_good), Y_res_good), "X_design_full must be a numeric matrix.")
+    expect_error(ndx_ar_whitening(Y_good, X_good, as.data.frame(Y_res_good)), "Y_residuals_for_AR_fit must be a numeric matrix.")
 
     Y_short_row <- matrix(rnorm(90*2), 90, 2)
-    expect_error(ndx_ar2_whitening(Y_short_row, X_good, Y_res_good), "Y_data, X_design_full, and Y_residuals_for_AR_fit must have the same number of rows")
+    expect_error(ndx_ar_whitening(Y_short_row, X_good, Y_res_good), "Y_data, X_design_full, and Y_residuals_for_AR_fit must have the same number of rows")
     
     Y_res_wrong_col <- matrix(rnorm(100*1), 100, 1)
-    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_wrong_col), "Y_data and Y_residuals_for_AR_fit must have the same number of columns")
+    expect_error(ndx_ar_whitening(Y_good, X_good, Y_res_wrong_col), "Y_data and Y_residuals_for_AR_fit must have the same number of columns")
 
-    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_good, order = 0.5), "order must be a single positive integer.")
-    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_good, order = 0), "order must be a single positive integer.")
-    expect_error(ndx_ar2_whitening(Y_good, X_good, Y_res_good, order = c(1,2)), "order must be a single positive integer.")
+    expect_error(ndx_ar_whitening(Y_good, X_good, Y_res_good, order = 0.5), "order must be a single positive integer.")
+    expect_error(ndx_ar_whitening(Y_good, X_good, Y_res_good, order = 0), "order must be a single positive integer.")
+    expect_error(ndx_ar_whitening(Y_good, X_good, Y_res_good, order = c(1,2)), "order must be a single positive integer.")
     
     Y_too_short <- matrix(rnorm(2*2), 2, 2)
     X_too_short <- matrix(rnorm(2*3), 2, 3)
     Y_res_too_short <- matrix(rnorm(2*2), 2, 2)
-    expect_error(ndx_ar2_whitening(Y_too_short, X_too_short, Y_res_too_short, order = 2L), 
+    expect_error(ndx_ar_whitening(Y_too_short, X_too_short, Y_res_too_short, order = 2L), 
                  regexp = "Number of timepoints \\(2\\) must be greater than AR order \\(2\\)\\.")
 }) 
 
-test_that("ndx_ar2_whitening effectively whitens AR(2) noise", {
+test_that("ndx_ar_whitening effectively whitens AR(2) noise", {
   set.seed(2024)
   n_timepoints <- 400
   ar_coeffs <- c(0.8, -0.25)
   sim <- .generate_ar_data(n_timepoints, ar_coeffs, 1.0)
   Y <- matrix(sim$series, ncol = 1)
   X <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
-  res <- ndx_ar2_whitening(Y, X, Y, order = 2L, verbose = FALSE)
+  res <- ndx_ar_whitening(Y, X, Y, order = 2L, verbose = FALSE)
   Yw <- res$Y_whitened[!res$na_mask, 1]
   lb <- Box.test(Yw, lag = 5, type = "Ljung-Box")
   expect_gt(lb$p.value, 0.05, label = "Whitened series should pass Ljung-Box test")
@@ -205,12 +205,12 @@ test_that("ndx_ar2_whitening effectively whitens AR(2) noise", {
   expect_true(all(abs(ar_after$ar) < 0.1), label = "AR coeffs after whitening near zero")
 })
 
-test_that("ndx_ar2_whitening leaves white noise unchanged", {
+test_that("ndx_ar_whitening leaves white noise unchanged", {
   set.seed(2025)
   n_timepoints <- 200
   Y <- matrix(rnorm(n_timepoints), ncol = 1)
   X <- matrix(rnorm(n_timepoints), ncol = 1)
-  res <- ndx_ar2_whitening(Y, X, Y, order = 2L, verbose = FALSE)
+  res <- ndx_ar_whitening(Y, X, Y, order = 2L, verbose = FALSE)
   
   # Check AR coefficients are small
   expect_true(all(abs(res$AR_coeffs_voxelwise) < 0.15), 
@@ -237,15 +237,15 @@ test_that("ndx_ar2_whitening leaves white noise unchanged", {
   }
 })
 
-test_that("ndx_ar2_whitening handles precision weights", {
+test_that("ndx_ar_whitening handles precision weights", {
   set.seed(1234)
   n_tp <- 100
   ar_order <- 2
   Y <- matrix(rnorm(n_tp*2), nrow=n_tp, ncol=2)
   X <- matrix(rnorm(n_tp*2), nrow=n_tp, ncol=2)
   weights <- matrix(1, nrow=n_tp, ncol=2)
-  res_unw <- ndx_ar2_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, verbose=FALSE)
-  res_w <- ndx_ar2_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, weights=weights, verbose=FALSE)
+  res_unw <- ndx_ar_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, verbose=FALSE)
+  res_w <- ndx_ar_whitening(Y, X, Y, order = ar_order, global_ar_on_design=FALSE, weights=weights, verbose=FALSE)
   expect_equal(res_w$AR_coeffs_voxelwise, res_unw$AR_coeffs_voxelwise, tolerance = 0.05,
                label = "AR coeffs with unit weights should be close to unweighted AR coeffs (ar.yw vs lm.wfit)")
 })

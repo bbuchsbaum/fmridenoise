@@ -143,7 +143,7 @@ test_that("NDX_Process_Subject runs with minimal valid inputs and returns correc
       expect_true(is.matrix(workflow_output$ar_coeffs_voxelwise))
       expect_equal(ncol(workflow_output$ar_coeffs_voxelwise), n_voxels_test)
       # Expect 2 rows for AR(2) coefficients, or 3 if intercept is included by ar.yw
-      # ndx_ar2_whitening stores only the 2 AR coefficients. 
+      # ndx_ar_whitening stores only the 2 AR coefficients. 
       expect_equal(nrow(workflow_output$ar_coeffs_voxelwise), 2)
   }
 

@@ -1,7 +1,7 @@
 NDX_Process_Subject     Process a Single Subject through the Full ND-X
                         Iterative Denoising Workflow
 calculate_DES           Calculate Denoising Efficacy Score (DES)
-ndx_ar2_whitening       AR(2) Pre-whitening for fMRI Data
+ndx_ar_whitening       AR(2) Pre-whitening for fMRI Data
 ndx_build_design_matrix
                         Build a Full Design Matrix from Modular
                         Components

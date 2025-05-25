@@ -20,7 +20,7 @@
 #'   - `opts_hrf`: List of options for `ndx_estimate_initial_hrfs` (e.g., `hrf_fir_taps`, `good_voxel_R2_threshold`, `lambda1_grid`, `lambda2_grid`, `cv_folds`).
 #'   - `opts_rpca`: List of options for `ndx_rpca_temporal_components_multirun` (e.g., `k_per_run_target`, `rpca_lambda_auto`).
 #'   - `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
-#'   - `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
+#'   - `opts_whitening`: List of options for `ndx_ar_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
 #'   - `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
 #'   - `opts_annihilation`: List of options for Annihilation Mode (e.g., `annihilation_enable_mode`, `annihilation_gdlite_k_max`).
 #'   - `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
@@ -443,7 +443,7 @@ NDX_Process_Subject <- function(Y_fmri,
         Y_residuals_current # Fallback
       })
       
-      whitening_output <- ndx_ar2_whitening(
+      whitening_output <- ndx_ar_whitening(
         Y_data = Y_fmri,
         X_design_full = X_full_design,
         Y_residuals_for_AR_fit = temp_glm_for_ar_residuals,
