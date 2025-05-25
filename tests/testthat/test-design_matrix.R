@@ -377,7 +377,15 @@ test_that("run_idx with NA triggers error", {
       rpca_components = rpca_comps_dm,
       spectral_sines = spectral_sines_dm,
       run_idx = bad_run_idx,
+      TR = TR_test_dm,
+      poly_degree = 1,
+      verbose = FALSE
+    ),
+    "run_idx contains NA"
+  )
 })
+
+
 
 test_that("ndx_build_design_matrix errors when events blockids are invalid", {
   events_bad <- events_dm
@@ -394,9 +402,7 @@ test_that("ndx_build_design_matrix errors when events blockids are invalid", {
       poly_degree = 1,
       verbose = FALSE
     ),
-    "run_idx contains NA"
-  )
-    "events\$blockids"
+    "events\\$blockids"
   )
 })
 
