@@ -18,6 +18,9 @@
 #' @param weights Optional numeric matrix of weights (timepoints x voxels) used
 #'   for weighted AR coefficient estimation. If NULL, unweighted estimation is
 #'   performed.
+#' @param max_ar_failures_prop Numeric between 0 and 1. If the proportion of
+#'   voxels with failed or unstable AR fits exceeds this threshold, whitening is
+#'   skipped and a warning is issued. Default: 0.3.
 #' @param global_ar_stat Character string specifying how to summarize voxel-wise
 #'   AR coefficients when computing the global filter for `X_design_full`.
 #'   Options are "mean" (default), "median", or "trimmed_mean" (10% trimmed
@@ -52,6 +55,7 @@
 ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
                               order = 2L, global_ar_on_design = TRUE,
                               verbose = TRUE, weights = NULL,
+                              max_ar_failures_prop = 0.3) {
                               global_ar_stat = c("mean", "median", "trimmed_mean")) {
 
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {
@@ -164,8 +168,19 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
       message(sprintf("%d/%d voxels had AR coefficients set to zero (due to fit failure or instability). These will not be whitened.", num_phi_zeroed, n_voxels))
   }
   
-  if (n_voxels > 0 && (num_phi_zeroed / n_voxels) > 0.3) {
-      warning(sprintf("More than 30%% (%d/%d) of voxels had AR coefficients set to zero. Consider checking input Y_residuals_for_AR_fit.", num_phi_zeroed, n_voxels))
+  failure_prop <- if (n_voxels > 0) num_phi_zeroed / n_voxels else 0
+  if (failure_prop > max_ar_failures_prop) {
+      warning(sprintf(
+        "Proportion of failed AR fits (%.2f) exceeds max_ar_failures_prop %.2f. Skipping whitening.",
+        failure_prop, max_ar_failures_prop))
+      return(list(
+        Y_whitened = Y_data,
+        X_whitened = X_design_full,
+        AR_coeffs_voxelwise = AR_coeffs_voxelwise,
+        AR_coeffs_global = NULL,
+        var_innovations_voxelwise = var_innovations_voxelwise,
+        na_mask = rep(FALSE, n_timepoints)
+      ))
   }
 
   if (verbose) message("Applying voxel-specific AR filter to Y_data...")

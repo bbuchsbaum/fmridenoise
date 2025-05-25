@@ -488,7 +488,8 @@ NDX_Process_Subject <- function(Y_fmri,
         Y_residuals_for_AR_fit = temp_glm_for_ar_residuals,
         order = opts_whitening$order %||% 2L,
         global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE,
-        weights = precision_weights_for_pass
+        weights = precision_weights_for_pass,
+        max_ar_failures_prop = opts_whitening$max_ar_failures_prop %||% 0.3
       )
       current_pass_results$Y_whitened <- whitening_output$Y_whitened
       current_pass_results$X_whitened <- whitening_output$X_whitened
