@@ -110,7 +110,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
                                    plot    = FALSE)
   }, error = function(e) {
     warning(paste("multitaper::spec.mtm failed:", e$message))
-    mt_res <<- NULL
+    assign("mt_res", NULL, envir = parent.env(environment()))
   })
 
   if (is.null(mt_res) || is.null(mt_res$spec) || is.null(mt_res$freq) || length(mt_res$spec) == 0) {
