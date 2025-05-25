@@ -18,6 +18,8 @@
 #' @param run_idx Numeric vector indicating run membership for each timepoint in `Y_fmri`.
 #'   (e.g., c(rep(1,100), rep(2,100)) for two runs of 100 timepoints each).
 #' @param TR Numeric, repetition time in seconds.
+#' @param poly_degree Integer specifying the polynomial degree used for the
+#'   Legendre baseline model. Passed to `fmrireg::baseline_model`. Default: 1L.
 #' @return A list containing:
 #'   - `Y_residuals_current`: Matrix of residuals after the full initial GLM (task + motion + polynomials).
 #'   - `VAR_BASELINE_FOR_DES`: Numeric, variance of residuals from a task-only GLM (task + run intercepts).
@@ -44,14 +46,16 @@
 #' )
 #'
 #' initial_glm_output <- ndx_initial_glm(Y_fmri_example, events_example,
-#'                                     motion_params_example, run_idx_example, TR)
+#'                                     motion_params_example, run_idx_example, TR,
+#'                                     poly_degree = 2L)
 #' head(initial_glm_output$Y_residuals_current)
 #' print(initial_glm_output$VAR_BASELINE_FOR_DES)
 #' }
 #' @import fmrireg
 #' @import stats
 #' @export
-ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
+ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
+                            poly_degree = 1L) {
 
   # Validate inputs
   if (!is.matrix(Y_fmri)) {
@@ -198,7 +202,7 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
     }
   }
 
-  bm_pass0 <- fmrireg::baseline_model(basis = "poly", degree = 1L, intercept = "runwise",
+  bm_pass0 <- fmrireg::baseline_model(basis = "poly", degree = poly_degree, intercept = "runwise",
                                       sframe = sf, nuisance_list = nuisance_arg_for_bm_pass0)
 
   model_pass0 <- fmrireg::fmri_model(event_model = em_task_only, baseline_model = bm_pass0)

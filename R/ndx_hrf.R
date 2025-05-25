@@ -54,8 +54,9 @@
 #'    Y_fmri_example[,1:50] <- Y_fmri_example[,1:50] + X_taskA_signal %*% matrix(rnorm(ncol(X_taskA_signal)*50, mean=3, sd=1), ncol=50)
 #' }
 #' 
-#' pass0_out <- ndx_initial_glm(Y_fmri_example, events_example, 
-#'                                  motion_params_example, run_idx_example, TR)
+#' pass0_out <- ndx_initial_glm(Y_fmri_example, events_example,
+#'                                  motion_params_example, run_idx_example, TR,
+#'                                  poly_degree = 1L)
 #' 
 #' # --- Now for ndx_estimate_initial_hrfs --- 
 #' user_opts_hrf <- list(

@@ -188,7 +188,8 @@ NDX_Process_Subject <- function(Y_fmri,
         events = events,
         motion_params = motion_params, # Initial GLM uses original motion params
         run_idx = run_idx,
-        TR = TR
+        TR = TR,
+        poly_degree = opts_pass0$poly_degree
       )
       Y_residuals_current <- initial_glm_output$Y_residuals_current
       VAR_BASELINE_FOR_DES <- initial_glm_output$VAR_BASELINE_FOR_DES # Store for all DES calculations
