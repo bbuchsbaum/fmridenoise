@@ -1,9 +1,11 @@
 #' Process a Single Subject through the Full ND-X Iterative Denoising Workflow
 #'
-#' This function orchestrates the core modules of the ND-X pipeline. 
-#' It iteratively performs initial residual generation, FIR HRF estimation, 
-#' nuisance component identification (RPCA and Spectral), AR(2) pre-whitening, 
-#' and ridge regression until convergence or max passes.
+#' This function orchestrates the core modules of the ND-X pipeline.
+#' It iteratively performs initial residual generation, FIR HRF estimation,
+#' nuisance component identification (RPCA and Spectral), AR(2) pre-whitening,
+#' and ridge regression until convergence or max passes. Input types are
+#' validated and the function will stop with informative error messages if they
+#' do not meet expectations.
 #'
 #' @param Y_fmri A numeric matrix of fMRI data (total_timepoints x voxels), concatenated across runs if applicable.
 #' @param events A data frame describing experimental events. Must contain columns compatible
@@ -56,7 +58,36 @@ NDX_Process_Subject <- function(Y_fmri,
 
   if (verbose) message("Starting ND-X Processing for Subject...")
 
-  # --- 0. Validate inputs and merge default user_options --- 
+  # --- 0. Validate inputs and merge default user_options ---
+  # Validate primary inputs similar to ndx_initial_glm
+  if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) {
+    stop("Y_fmri must be a numeric matrix (timepoints x voxels).")
+  }
+  n_timepoints <- nrow(Y_fmri)
+  if (n_timepoints == 0) stop("Y_fmri has zero timepoints.")
+  if (ncol(Y_fmri) == 0) stop("Y_fmri has zero voxels.")
+
+  if (!is.matrix(motion_params) || !is.numeric(motion_params)) {
+    stop("motion_params must be a numeric matrix.")
+  }
+  if (nrow(motion_params) != n_timepoints) {
+    stop("Number of rows in motion_params must match Y_fmri.")
+  }
+
+  if (!is.data.frame(events)) stop("events must be a data frame.")
+  required_event_cols <- c("onsets", "durations", "condition", "blockids")
+  if (!all(required_event_cols %in% names(events))) {
+    stop(paste("events data frame must contain columns:",
+               paste(required_event_cols, collapse = ", ")))
+  }
+
+  if (!is.numeric(run_idx) || length(run_idx) != n_timepoints) {
+    stop("run_idx must be a numeric vector with length matching nrow(Y_fmri).")
+  }
+  if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
+    stop("TR must be a single positive number.")
+  }
+
   # Default general workflow options
   max_passes <- user_options$max_passes %||% 3L
   min_des_gain_convergence <- user_options$min_des_gain_convergence %||% 0.005
