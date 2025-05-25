@@ -74,6 +74,24 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   if (!all(is.finite(mean_residual_for_spectrum))) {
     warning("mean_residual_for_spectrum contains non-finite values.")
     return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
+
+  default_n_sine_candidates <- 6
+  if (!is.numeric(n_sine_candidates) || length(n_sine_candidates) != 1 ||
+      n_sine_candidates <= 0) {
+    warning(sprintf("n_sine_candidates must be > 0. Using default %d.",
+                    default_n_sine_candidates))
+    n_sine_candidates <- default_n_sine_candidates
+  }
+
+  default_selection_delta_threshold <- 2
+  if (!is.numeric(selection_delta_threshold) ||
+      length(selection_delta_threshold) != 1 ||
+      selection_delta_threshold < 0) {
+    warning(sprintf(
+      "selection_delta_threshold must be >= 0. Using default %.2f.",
+      default_selection_delta_threshold
+    ))
+    selection_delta_threshold <- default_selection_delta_threshold
   }
 
   # De-mean the series (Feedback 2.1)
@@ -116,7 +134,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
                                    plot    = FALSE)
   }, error = function(e) {
     warning(paste("multitaper::spec.mtm failed:", e$message))
-    mt_res <<- NULL
+    assign("mt_res", NULL, envir = parent.env(environment()))
   })
 
   if (is.null(mt_res) || is.null(mt_res$spec) || is.null(mt_res$freq) || length(mt_res$spec) == 0) {
@@ -295,6 +313,15 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
   }
   
   criterion <- match.arg(criterion)
+
+  default_delta_threshold <- 2
+  if (!is.numeric(delta_threshold) || length(delta_threshold) != 1 ||
+      delta_threshold < 0) {
+    warning(sprintf("[Select_SSR] delta_threshold must be >= 0. Using default %.2f.",
+                    default_delta_threshold))
+    delta_threshold <- default_delta_threshold
+  }
+
   n_pairs <- ncol(U_candidates) %/% 2
   
   # If U_candidates is a 0-column matrix (e.g. no peaks from ndx_spectral_sines), n_pairs will be 0
