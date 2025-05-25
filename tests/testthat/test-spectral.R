@@ -55,6 +55,41 @@ test_that("ndx_spectral_sines generates correct regressors for a simple signal",
   }
 })
 
+test_that("ndx_spectral_sines warns on invalid n_sine_candidates and falls back to default", {
+  set.seed(999)
+  TR_val <- 1
+  n_tp <- 100
+  t_sec <- (seq_len(n_tp) - 1) * TR_val
+  mean_resid <- sin(2 * pi * 0.1 * t_sec) + rnorm(n_tp, sd = 0.1)
+
+  expect_warning(
+    res_bad <- ndx_spectral_sines(mean_resid, TR = TR_val, n_sine_candidates = -5),
+    "n_sine_candidates must be > 0"
+  )
+  set.seed(999)
+  res_def <- ndx_spectral_sines(mean_resid, TR = TR_val, n_sine_candidates = 6)
+  expect_equal(res_bad, res_def)
+})
+
+test_that("Select_Significant_Spectral_Regressors warns on negative delta_threshold", {
+  set.seed(888)
+  n_tp <- 100; TR <- 1
+  t_sec <- (seq_len(n_tp) - 1) * TR
+  y <- sin(2 * pi * 0.1 * t_sec) + rnorm(n_tp, sd = 0.1)
+  U_pair <- cbind(sin(2 * pi * 0.1 * t_sec), cos(2 * pi * 0.1 * t_sec))
+  colnames(U_pair) <- c("s", "c")
+  attr(U_pair, "freq_hz") <- 0.1
+  attr(U_pair, "freq_rad_s") <- 2 * pi * 0.1
+
+  expect_warning(
+    sel_bad <- Select_Significant_Spectral_Regressors(y, U_pair, delta_threshold = -1, criterion = "BIC"),
+    "delta_threshold must be >= 0"
+  )
+  set.seed(888)
+  sel_def <- Select_Significant_Spectral_Regressors(y, U_pair, delta_threshold = 2, criterion = "BIC")
+  expect_equal(sel_bad, sel_def)
+})
+
 test_that("ndx_spectral_sines handles no clear peaks", {
   set.seed(456)
   TR_val <- 1.0
@@ -92,6 +127,14 @@ test_that("ndx_spectral_sines handles invalid inputs", {
   
   expect_warning(ndx_spectral_sines(rnorm(100), TR = -1), "TR must be a positive numeric value.")
   expect_null(suppressWarnings(ndx_spectral_sines(rnorm(100), TR = -1)))
+})
+
+test_that("ndx_spectral_sines warns and returns empty matrix for non-finite input", {
+  vec_nf <- c(rnorm(10), NA, Inf)
+  expect_warning(res_nf <- ndx_spectral_sines(vec_nf, TR = 1),
+                 "non-finite")
+  expect_true(is.matrix(res_nf) && ncol(res_nf) == 0 && nrow(res_nf) == length(vec_nf))
+  expect_true(length(attr(res_nf, "freq_hz")) == 0)
 })
 
 test_that("nyquist_guard_factor works as expected", {
