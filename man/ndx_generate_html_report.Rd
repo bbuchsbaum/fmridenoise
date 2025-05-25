@@ -5,7 +5,8 @@
 \title{Generate ND-X HTML Diagnostic Report}
 \usage{
 ndx_generate_html_report(workflow_output, pass0_residuals, TR,
-  output_dir = "./diagnostics", filename = "ndx_diagnostic_report.html")
+  output_dir = "./diagnostics", filename = "ndx_diagnostic_report.html",
+  include_progressive_enhancement = TRUE)
 }
 \arguments{
 \item{workflow_output}{List returned by \code{NDX_Process_Subject}.}
@@ -16,11 +17,12 @@ ndx_generate_html_report(workflow_output, pass0_residuals, TR,
 
 \item{output_dir}{Directory to save the HTML and PNG figures.}
 
-\item{filename}{Name of the HTML file to create.}}
+\item{filename}{Name of the HTML file to create.}
+\item{include_progressive_enhancement}{Logical, whether to include the progressive enhancement visualization.}}
 \value{Path to the generated HTML file (invisibly).}
 \description{
 Creates a minimal HTML report summarizing ND-X diagnostics: DES per pass,
 \eqn{\beta}-stability across runs, Ljung-Box whiteness of residuals,
 residual power spectral density comparison, an optional spike carpet plot,
-and key adaptive hyperparameter values.
+and key adaptive hyperparameter values. Internal helper functions create each diagnostic plot.
 }
