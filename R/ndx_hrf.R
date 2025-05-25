@@ -722,8 +722,16 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
   best_gamma <- gamma_grid[1]
   best_score <- Inf
 
-  for (lam in lambda_grid) {
-    for (gam in gamma_grid) {
+  # Initialize matrix to store average MSE for each (lambda, gamma) pair
+  cv_error_matrix <- matrix(NA_real_, nrow = length(lambda_grid),
+                            ncol = length(gamma_grid),
+                            dimnames = list(NULL, NULL))
+
+  for (i in seq_along(lambda_grid)) {
+    lam <- lambda_grid[i]
+    for (j in seq_along(gamma_grid)) {
+      gam <- gamma_grid[j]
+
       mse_folds <- c()
       for (fold in seq_len(k_eff)) {
         test_blocks <- unique_blocks[fold_ids == fold]
@@ -761,6 +769,8 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
         mse_folds <- mean(mse_folds)
       }
 
+      cv_error_matrix[i, j] <- if (length(mse_folds) > 0) mse_folds else NA_real_
+
       if (length(mse_folds) > 0 && is.finite(mse_folds) && mse_folds < best_score) {
         best_score <- mse_folds
         best_lambda <- lam
@@ -769,7 +779,7 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
     }
   }
 
-  list(best_lambda = best_lambda, best_gamma = best_gamma)
+  list(best_lambda = best_lambda, best_gamma = best_gamma, cv_error_matrix = cv_error_matrix)
 }
 
 #' @keywords internal
