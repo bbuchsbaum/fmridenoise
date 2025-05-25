@@ -2,6 +2,7 @@
 
 export(Auto_Adapt_RPCA_Rank)
 export(NDX_Process_Subject)
+export(ndx_default_user_options)
 export(merge_lists)
 export(`%||%`)
 export(Select_Significant_Spectral_Regressors)

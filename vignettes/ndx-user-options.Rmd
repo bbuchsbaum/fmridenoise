@@ -25,25 +25,16 @@ The ND-X workflow functions, most notably `NDX_Process_Subject()`, accept a `use
 ```{r eval=FALSE}
 library(fmridenoise)
 
-# Example of setting user options
-user_options <- list(
-  # Top-level options
-  max_passes = 3,
-  min_des_gain_convergence = 0.005,
-  task_regressor_names_for_extraction = c("face", "house"),
-  
-  # Module-specific options
-  opts_pass0 = list(
-    poly_degree = 2
-  ),
-  
-  opts_hrf = list(
-    hrf_fir_taps = 12,
-    good_voxel_R2_threshold = 0.05
-  ),
-  
-  # ... and so on for other modules
-)
+# Example of setting user options starting from the package defaults
+user_options <- ndx_default_user_options()
+
+# Customize a few options
+user_options$task_regressor_names_for_extraction <- c("face", "house")
+user_options$opts_pass0$poly_degree <- 2
+user_options$opts_hrf$hrf_fir_taps <- 12
+user_options$opts_hrf$good_voxel_R2_threshold <- 0.05
+
+# ... and so on for other modules
 
 # Use in NDX_Process_Subject
 results <- NDX_Process_Subject(
