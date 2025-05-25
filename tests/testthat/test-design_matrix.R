@@ -330,3 +330,43 @@ test_that("drop_zero_variance option removes constant regressors", {
   )
   expect_false("rpca_comp_1" %in% colnames(X_drop))
 })
+
+test_that("ndx_build_design_matrix errors when events blockids are invalid", {
+  events_bad <- events_dm
+  events_bad$blockids[1] <- 99
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = events_bad,
+      motion_params = motion_params_dm,
+      rpca_components = rpca_comps_dm,
+      spectral_sines = spectral_sines_dm,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 1,
+      verbose = FALSE
+    ),
+    "events\$blockids"
+  )
+})
+
+test_that("non-sequential run_idx are mapped for events", {
+  run_idx_nonseq <- rep(c(10, 20), each = n_time_per_run_dm)
+  events_nonseq <- events_dm
+  events_nonseq$blockids <- c(10, 10, 20, 20)
+
+  X_nonseq <- ndx_build_design_matrix(
+    estimated_hrfs = estimated_hrfs_dm,
+    events = events_nonseq,
+    motion_params = motion_params_dm,
+    rpca_components = rpca_comps_dm,
+    spectral_sines = spectral_sines_dm,
+    run_idx = run_idx_nonseq,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE
+  )
+  expect_true(is.matrix(X_nonseq))
+  expect_equal(nrow(X_nonseq), total_timepoints_dm)
+  expect_true(any(grepl("run_intercept_20", colnames(X_nonseq))))
+})
