@@ -22,10 +22,14 @@ ndx_compute_projection_matrices <- function(U_GD = NULL, U_Unique = NULL,
   P_Unique <- make_proj(U_Unique)
   P_Noise <- make_proj(U_Noise)
 
-  P_combined <- matrix(0, n_regressors, n_regressors)
-  if (!is.null(P_GD)) P_combined <- P_combined + P_GD
-  if (!is.null(P_Unique)) P_combined <- P_combined + P_Unique
-  if (!is.null(P_Noise)) P_combined <- P_combined + P_Noise
+  basis_list <- list(U_GD, U_Unique, U_Noise)
+  non_null <- Filter(function(x) !is.null(x) && ncol(x) > 0, basis_list)
+  if (length(non_null) > 0) {
+    Q_all <- qr.Q(qr(do.call(cbind, non_null)))
+    P_combined <- Q_all %*% t(Q_all)
+  } else {
+    P_combined <- matrix(0, n_regressors, n_regressors)
+  }
   P_Signal <- I_reg - P_combined
 
   list(P_GD = P_GD, P_Unique = P_Unique, P_Noise = P_Noise, P_Signal = P_Signal)
