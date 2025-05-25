@@ -3,8 +3,9 @@
 #' This function creates a simple HTML report summarizing key diagnostics from
 #' a run of `NDX_Process_Subject`. It plots the Denoising Efficacy Score (DES)
 #' across passes, compares the power spectral density (PSD) of residuals from
-#' Pass 0 and the final ND-X pass, and optionally shows a spike "carpet" plot
-#' from the RPCA `S` matrix.
+#' Pass 0 and the final ND-X pass, visualizes \eqn{\beta}-stability across runs,
+#' shows the Ljung--Box p-value progression, and optionally displays a spike
+#' "carpet" plot from the RPCA `S` matrix.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
 #' @param pass0_residuals Matrix of residuals from `ndx_initial_glm` used as the
@@ -43,6 +44,22 @@ ndx_generate_html_report <- function(workflow_output,
                  main = "Denoising Efficacy Score per Pass")
   grDevices::dev.off()
 
+  # ---- Beta stability plot ----
+  beta_png <- NULL
+  if (!is.null(workflow_output$beta_history_per_pass)) {
+    beta_vals <- tryCatch(
+      calculate_beta_stability(workflow_output$beta_history_per_pass),
+      error = function(e) rep(NA_real_, length(workflow_output$beta_history_per_pass))
+    )
+    beta_png <- file.path(output_dir, "beta_stability_per_pass.png")
+    grDevices::png(beta_png, width = 600, height = 400)
+    graphics::plot(seq_along(beta_vals), beta_vals, type = "b",
+                   xlab = "Pass", ylab = "Beta Stability",
+                   ylim = c(-1, 1),
+                   main = "\u03B2-Stability Across Runs")
+    grDevices::dev.off()
+  }
+
   # ---- Residual PSD plot ----
   psd_png <- file.path(output_dir, "residual_psd.png")
   if (!is.null(workflow_output$Y_residuals_final_unwhitened)) {
@@ -70,6 +87,23 @@ workflow_output$Y_residuals_final_unwhitened has %d rows",
     grDevices::dev.off()
   } else {
     psd_png <- NULL
+  }
+
+  # ---- Ljung-Box p-value plot ----
+  ljung_png <- NULL
+  if (!is.null(workflow_output$diagnostics_per_pass)) {
+    ljung_vals <- sapply(workflow_output$diagnostics_per_pass,
+                         function(d) d$ljung_box_p)
+    if (any(!is.na(ljung_vals))) {
+      ljung_png <- file.path(output_dir, "ljung_box_pvalues.png")
+      grDevices::png(ljung_png, width = 600, height = 400)
+      graphics::plot(seq_along(ljung_vals), ljung_vals, type = "b",
+                     xlab = "Pass", ylab = "Ljung-Box p-value",
+                     ylim = c(0, 1),
+                     main = "Residual Whiteness (Ljung-Box)")
+      graphics::abline(h = 0.05, col = "red", lty = 2)
+      grDevices::dev.off()
+    }
   }
 
   # ---- Spike carpet plot ----
@@ -142,12 +176,32 @@ workflow_output$Y_residuals_final_unwhitened has %d rows",
     "</div>"
   )
 
+  # ---- Add beta stability section ----
+  if (!is.null(beta_png)) {
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>&beta;-Stability Across Runs</h2>",
+      sprintf("<img src='%s' alt='Beta stability'>", basename(beta_png)),
+      "</div>"
+    )
+  }
+
   # ---- Add PSD section ----
   if (!is.null(psd_png)) {
     html_lines <- c(html_lines,
       "<div class='section'>",
       "<h2>Residual Power Spectral Density</h2>",
       sprintf("<img src='%s' alt='Residual PSD'>", basename(psd_png)),
+      "</div>"
+    )
+  }
+
+  # ---- Add Ljung-Box section ----
+  if (!is.null(ljung_png)) {
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>Ljung-Box p-value per Pass</h2>",
+      sprintf("<img src='%s' alt='Ljung-Box p-values'>", basename(ljung_png)),
       "</div>"
     )
   }
