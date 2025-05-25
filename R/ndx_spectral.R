@@ -25,8 +25,9 @@
 #' @return A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
 #'   rows. Each pair of columns represents sine and cosine regressors for an
 #'   identified peak frequency. The attribute "freq" contains the frequencies
-#'   (in Hz) of the selected peaks. Returns NULL if no peaks are found or if
-#'   input is unsuitable.
+#'   (in Hz) of the selected peaks. Returns NULL if no peaks are found.
+#'   Returns a 0-column matrix if the spectral step is aborted due to invalid
+#'   parameters or non-finite input.
 #'
 #' @examples
 #' \dontrun{
@@ -69,6 +70,10 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
     warning("TR must be a positive numeric value.")
     return(NULL)
   }
+
+  if (!all(is.finite(mean_residual_for_spectrum))) {
+    warning("mean_residual_for_spectrum contains non-finite values.")
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
 
   default_n_sine_candidates <- 6
   if (!is.numeric(n_sine_candidates) || length(n_sine_candidates) != 1 ||

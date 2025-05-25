@@ -138,6 +138,14 @@ test_that("ndx_spectral_sines handles invalid inputs", {
   expect_null(suppressWarnings(ndx_spectral_sines(rnorm(100), TR = -1)))
 })
 
+test_that("ndx_spectral_sines warns and returns empty matrix for non-finite input", {
+  vec_nf <- c(rnorm(10), NA, Inf)
+  expect_warning(res_nf <- ndx_spectral_sines(vec_nf, TR = 1),
+                 "non-finite")
+  expect_true(is.matrix(res_nf) && ncol(res_nf) == 0 && nrow(res_nf) == length(vec_nf))
+  expect_true(length(attr(res_nf, "freq_hz")) == 0)
+})
+
 test_that("nyquist_guard_factor works as expected", {
   set.seed(789)
   TR_val <- 1.0
