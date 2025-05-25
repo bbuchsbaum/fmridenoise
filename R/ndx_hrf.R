@@ -54,8 +54,9 @@
 #'    Y_fmri_example[,1:50] <- Y_fmri_example[,1:50] + X_taskA_signal %*% matrix(rnorm(ncol(X_taskA_signal)*50, mean=3, sd=1), ncol=50)
 #' }
 #' 
-#' pass0_out <- ndx_initial_glm(Y_fmri_example, events_example, 
-#'                                  motion_params_example, run_idx_example, TR)
+#' pass0_out <- ndx_initial_glm(Y_fmri_example, events_example,
+#'                                  motion_params_example, run_idx_example, TR,
+#'                                  poly_degree = 1L)
 #' 
 #' # --- Now for ndx_estimate_initial_hrfs --- 
 #' user_opts_hrf <- list(
@@ -328,6 +329,17 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
     stop("TR must be a single positive number.")
   }
 
+  blocks_events <- sort(unique(events$blockids))
+  blocks_runs <- sort(unique(run_idx))
+  if (!identical(blocks_events, blocks_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(blocks_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
+
   validated_spike_TR_mask <- spike_TR_mask
   if (is.null(validated_spike_TR_mask)) {
     validated_spike_TR_mask <- rep(FALSE, n_timepoints)
@@ -495,10 +507,11 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   X_fir_cond_all_trs <- tryCatch({
        get_fir_design_matrix_for_condition(
           condition_name = condition_name,
-          events_df = events_for_condition, 
-          sampling_frame = overall_sampling_frame, 
-          fir_taps = effective_hrf_fir_taps, 
-          TR = TR 
+          events_df = events_for_condition,
+          sampling_frame = overall_sampling_frame,
+          fir_taps = effective_hrf_fir_taps,
+          TR = TR,
+          verbose = (user_options$verbose_hrf %||% FALSE)
       )
   }, error = function(e) {
       warning(paste("Error generating FIR design for condition", condition_name, ":", e$message))
@@ -609,21 +622,24 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
 #' @keywords internal
 # NO @export for get_fir_design_matrix_for_condition
 get_fir_design_matrix_for_condition <- function(condition_name, events_df,
-                                                sampling_frame, fir_taps, TR) {
+                                                sampling_frame, fir_taps, TR,
+                                                verbose = FALSE) {
   
   total_timepoints <- sum(sampling_frame$blocklens)
   
   # --- BEGIN DEBUG MESSAGES ---
-  message(sprintf("[get_fir_design_matrix_for_condition] Cond: %s", condition_name))
-  message(sprintf("  Input fir_taps: %s (class: %s), Input TR: %s (class: %s)", 
-                  as.character(fir_taps), class(fir_taps), as.character(TR), class(TR)))
-  message(sprintf("  sampling_frame$total_samples (total_timepoints): %s (class: %s)", 
-                  as.character(total_timepoints), class(total_timepoints)))
-  if (!is.numeric(total_timepoints) || length(total_timepoints) != 1 || !is.finite(total_timepoints) || total_timepoints < 0) {
-      message("  WARNING: total_timepoints is not a single positive finite number!")
-  }
-  if (!is.numeric(fir_taps) || length(fir_taps) != 1 || !is.finite(fir_taps) || fir_taps < 0) {
-      message("  WARNING: fir_taps is not a single positive finite number!")
+  if (verbose) {
+    message(sprintf("[get_fir_design_matrix_for_condition] Cond: %s", condition_name))
+    message(sprintf("  Input fir_taps: %s (class: %s), Input TR: %s (class: %s)",
+                    as.character(fir_taps), class(fir_taps), as.character(TR), class(TR)))
+    message(sprintf("  sampling_frame$total_samples (total_timepoints): %s (class: %s)",
+                    as.character(total_timepoints), class(total_timepoints)))
+    if (!is.numeric(total_timepoints) || length(total_timepoints) != 1 || !is.finite(total_timepoints) || total_timepoints < 0) {
+        message("  WARNING: total_timepoints is not a single positive finite number!")
+    }
+    if (!is.numeric(fir_taps) || length(fir_taps) != 1 || !is.finite(fir_taps) || fir_taps < 0) {
+        message("  WARNING: fir_taps is not a single positive finite number!")
+    }
   }
   # --- END DEBUG MESSAGES ---
 
@@ -875,7 +891,7 @@ project_hrf_cone <- function(h,
     pam_fit <- cluster::pam(t(Y_for_clustering), k = num_clusters, diss = FALSE, metric="euclidean", stand = FALSE)
   }, error = function(e) {
     warning(sprintf("K-Medoids clustering (pam) failed: %s. Assigning all to cluster 1.", e$message))
-    pam_fit <<- NULL # Ensure it's NULL in outer scope on error
+    pam_fit <- NULL # Keep pam_fit local on error
   })
   
   if (is.null(pam_fit)) {
