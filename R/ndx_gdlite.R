@@ -460,7 +460,7 @@ cv_r2_loro <- function(Y_fmri, X_design, run_idx) {
 #' @return A numeric vector of length `ncol(Y_data)` containing the tSNR value for
 #'   each voxel. Returns `NA` for voxels with zero standard deviation or if issues occur.
 #'
-#' @importFrom stats sd lm residuals mad
+#' @importFrom matrixStats colMeans2 colSds colMedians colMads
 #' @keywords internal
 #' @export
 calculate_tsnr <- function(Y_data, detrend = FALSE, robust = FALSE) {
@@ -472,52 +472,44 @@ calculate_tsnr <- function(Y_data, detrend = FALSE, robust = FALSE) {
     return(numeric(0))
   }
 
-  n_voxels <- ncol(Y_data)
   n_timepoints <- nrow(Y_data)
-  tsnr_values <- numeric(n_voxels)
+  time_vector <- seq_len(n_timepoints)
+  residuals <- Y_data
 
-  time_vector <- 1:n_timepoints
+  if (detrend) {
+    t_mean <- mean(time_vector)
+    time_centered <- time_vector - t_mean
 
-  for (v_idx in 1:n_voxels) {
-    voxel_series <- Y_data[, v_idx]
-    valid_mask <- !is.na(voxel_series)
-    
-    if (sum(valid_mask) < 2) { # Need at least 2 points for sd
-      tsnr_values[v_idx] <- NA_real_
-      next
-    }
-    voxel_series_valid <- voxel_series[valid_mask]
-    time_vector_valid <- time_vector[valid_mask]
+    mean_y <- matrixStats::colMeans2(Y_data, na.rm = TRUE)
+    y_centered <- sweep(Y_data, 2, mean_y, "-")
+    valid_mask <- !is.na(Y_data)
 
-    if (detrend) {
-      if (length(unique(time_vector_valid)) > 1) { # Check if detrending is possible
-        fit <- tryCatch(stats::lm(voxel_series_valid ~ time_vector_valid), error = function(e) NULL)
-        if (!is.null(fit)) {
-          voxel_series_processed <- stats::residuals(fit)
-        } else {
-          voxel_series_processed <- voxel_series_valid - mean(voxel_series_valid, na.rm = TRUE) # Fallback: just demean
-        }
-      } else {
-        voxel_series_processed <- voxel_series_valid - mean(voxel_series_valid, na.rm = TRUE) # Not enough unique time points to detrend, just demean
-      }
-    } else {
-      voxel_series_processed <- voxel_series_valid
-    }
-    
-    if (robust) {
-        mean_val <- stats::median(voxel_series_processed, na.rm = TRUE)
-        sd_val <- stats::mad(voxel_series_processed, na.rm = TRUE)
-    } else {
-        mean_val <- mean(voxel_series_processed, na.rm = TRUE)
-        sd_val <- stats::sd(voxel_series_processed, na.rm = TRUE)
-    }
+    numer <- colSums(time_centered * y_centered, na.rm = TRUE)
+    denom <- colSums((time_centered^2) * valid_mask, na.rm = TRUE)
+    slope <- numer / denom
+    slope[!is.finite(slope)] <- NA_real_
+    intercept <- mean_y - slope * t_mean
 
-    if (is.na(sd_val) || sd_val < 1e-9) { # Check for NA or near-zero standard deviation
-      tsnr_values[v_idx] <- NA_real_ # Or 0, depending on convention for zero SD
-    } else {
-      tsnr_values[v_idx] <- mean_val / sd_val
-    }
+    pred <- outer(time_vector, slope)
+    pred <- sweep(pred, 2, intercept, "+")
+    residuals <- Y_data - pred
   }
+
+  valid_counts <- colSums(!is.na(residuals))
+
+  if (robust) {
+    mean_vals <- matrixStats::colMedians(residuals, na.rm = TRUE)
+    sd_vals <- matrixStats::colMads(residuals, na.rm = TRUE)
+  } else {
+    mean_vals <- matrixStats::colMeans2(residuals, na.rm = TRUE)
+    sd_vals <- matrixStats::colSds(residuals, na.rm = TRUE)
+  }
+
+  sd_vals[valid_counts < 2 | sd_vals < 1e-9 | !is.finite(sd_vals)] <- NA_real_
+
+  tsnr_values <- mean_vals / sd_vals
+  tsnr_values[!is.finite(tsnr_values)] <- NA_real_
+
   return(tsnr_values)
 }
 
