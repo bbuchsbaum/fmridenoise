@@ -1,6 +1,6 @@
-#' ND-X User Options Reference
-#'
-#' This provides documentation for all configuration options available in the
+#' @title ND-X User Options Reference
+#' @description
+#' This documentation describes all configuration options available in the
 #' ND-X package functions. Most functions accept a `user_options` parameter,
 #' which is a list containing these configuration options organized into
 #' sub-lists for different modules.
