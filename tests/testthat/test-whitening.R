@@ -120,7 +120,8 @@ test_that("ndx_ar2_whitening handles failed AR fits gracefully", {
   Y_residuals_for_AR_fit_sim <- cbind(ar_data1$series, zero_var_residuals)
   X_design_sim <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
 
-  whitening_results <- ndx_ar2_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim, order = ar_order)
+  whitening_results <- ndx_ar2_whitening(Y_data_sim, X_design_sim, Y_residuals_for_AR_fit_sim,
+                                         order = ar_order, max_ar_failures_prop = 0.6)
 
   # Check AR_coeffs_voxelwise for the failed voxel
   expect_equal(whitening_results$AR_coeffs_voxelwise[2, ], c(0,0), 

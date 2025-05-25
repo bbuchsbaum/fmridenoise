@@ -9,7 +9,8 @@ ndx_ar2_whitening(
   X_design_full,
   Y_residuals_for_AR_fit,
   order = 2L,
-  global_ar_on_design = TRUE
+  global_ar_on_design = TRUE,
+  max_ar_failures_prop = 0.3
 )
 }
 \arguments{
@@ -27,6 +28,11 @@ that accounts for task effects and other known structured noise components.}
 \item{global_ar_on_design}{Logical, if TRUE (default), a global AR model (averaged from successful
 voxel-wise fits) is used to whiten `X_design_full`. If FALSE, `X_design_full` is not whitened,
 and users should handle its whitening if necessary for downstream voxel-wise modeling.}
+
+\item{max_ar_failures_prop}{Numeric between 0 and 1 specifying the maximum
+allowed proportion of voxels with failed or unstable AR fits. If the observed
+proportion exceeds this threshold, whitening is skipped and a warning is
+issued.}
 }
 \value{
 A list containing:
