@@ -128,7 +128,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     if (!is.data.frame(events) || !("blockids" %in% names(events))) {
       stop("events must be a data.frame containing a 'blockids' column for validation.")
     }
-    invalid_blocks <- setdiff(unique(events$blockids), unique_runs)
+    invalid_blocks <- setdiff(unique(events$blockids), unique_vals)
     if (length(invalid_blocks) > 0) {
       stop(sprintf("events$blockids contains values not present in run_idx: %s",
                    paste(invalid_blocks, collapse = ", ")))

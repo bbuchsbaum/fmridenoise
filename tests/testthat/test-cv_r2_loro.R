@@ -16,7 +16,7 @@ test_that("perfectly predicted data yields R2 of one", {
 
 test_that("design matrix with zero columns returns zeros", {
   Y <- matrix(rnorm(10 * 3), nrow = 10)
-  X <- matrix(nrow = 10, ncol = 0)
+  X <- matrix(numeric(0), nrow = 10, ncol = 0)
   run_idx <- rep(1:2, each = 5)
   expect_warning(r2 <- cv_r2_loro(Y, X, run_idx))
   expect_equal(r2, rep(0, ncol(Y)))

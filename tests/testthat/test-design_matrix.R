@@ -55,7 +55,7 @@ test_that("ndx_build_design_matrix runs with all components present (multi-run)"
       spectral_sines = spectral_sines_dm,
       run_idx = run_idx_dm,
       TR = TR_test_dm,
-      poly_degree = 1, # poly0, poly1, poly2 for degree=1
+      poly_degree = 1, # poly0, poly1 for degree=1 (3 columns total: 1 global + 1 per run)
       verbose = FALSE
     )
   })
@@ -68,7 +68,7 @@ test_that("ndx_build_design_matrix runs with all components present (multi-run)"
   # Motion (3) = 3
   # RPCA (2) = 2 
   # Spectral (4) = 4
-  # Poly (poly0, poly1, poly2 for degree=1) = 3
+  # Poly (poly0, poly1_block_1, poly1_block_2 for degree=1) = 3
   # Run Intercepts (for run2, since poly0 is overall intercept and 2 runs) = 1 
   # Total = 2 + 3 + 2 + 4 + 3 + 1 = 15
   expect_equal(ncol(X_full), 15)
@@ -146,16 +146,16 @@ test_that("ndx_build_design_matrix handles single run correctly", {
       spectral_sines = spectral_single_dm,
       run_idx = run_idx_single_dm,
       TR = TR_test_dm,
-      poly_degree = 1, # poly0, poly1, poly2 for degree=1
-      verbose = TRUE
+      poly_degree = 1, # poly0, poly1_block_1 for degree=1 (2 columns for single run)
+      verbose = FALSE
     )
   })
   expect_true(is.matrix(X_single_run))
   expect_equal(nrow(X_single_run), n_time_per_run_dm)
-  # Task (2) + Motion (3) + RPCA (2) + Spectral (4) + Poly (2: poly0,poly1 for degree=1 on single run) = 13. 
+  # Task (2) + Motion (3) + RPCA (2) + Spectral (4) + Poly (2: poly0, poly1_block_1 for degree=1 on single run) = 13. 
   # No run-specific intercept as only 1 run and poly0 exists.
   expect_equal(ncol(X_single_run), 13)
-  # Check for specific poly names if needed, e.g. expect_true(all(c("poly0", "poly1") %in% colnames(X_single_run)))
+  expect_true(all(c("poly0", "poly1") %in% colnames(X_single_run)))
   
   # Single run, no polynomials -> should add an overall intercept
   X_single_run_no_poly <- NULL
@@ -189,7 +189,7 @@ test_that("ndx_build_design_matrix handles no task HRFs", {
       spectral_sines = spectral_sines_dm,
       run_idx = run_idx_dm,
       TR = TR_test_dm,
-      poly_degree = 1, # poly0, poly1, poly2
+      poly_degree = 1, # poly0, poly1_block_1, poly1_block_2
       verbose = FALSE
     )
   })
@@ -209,7 +209,7 @@ test_that("ndx_build_design_matrix handles no task HRFs", {
       spectral_sines = spectral_sines_dm,
       run_idx = run_idx_dm,
       TR = TR_test_dm,
-      poly_degree = 1, # poly0, poly1, poly2
+      poly_degree = 1, # poly0, poly1_block_1, poly1_block_2
       verbose = FALSE
     )
   })
@@ -238,6 +238,13 @@ test_that("ndx_build_design_matrix generates correct polynomial degrees and inte
   # intercept (1) = 1 column
   expect_equal(ncol(X_no_poly_singlerun), 1)
   expect_true("intercept" %in% colnames(X_no_poly_singlerun))
+  
+  # Test higher polynomial degrees
+  X_poly2 <- ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL, 
+                                   run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=2, verbose=FALSE)
+  # poly0, poly1_block_1, poly2_block_1, poly1_block_2, poly2_block_2 (5) + run_intercept_2 (1) = 6 columns
+  expect_equal(ncol(X_poly2), 6)
+  expect_true(all(c("poly0", "poly1", "poly2", "poly3", "poly4", "run_intercept_2") %in% colnames(X_poly2)))
 })
 
 test_that("ndx_build_design_matrix errors on row mismatches for inputs", {
@@ -245,6 +252,16 @@ test_that("ndx_build_design_matrix errors on row mismatches for inputs", {
   expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=bad_motion, rpca_components=NULL, spectral_sines=NULL,
                                       run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=0, verbose=FALSE),
                "Row mismatch: motion_params")
+  
+  bad_rpca <- rpca_comps_dm[1:(total_timepoints_dm-2), , drop=FALSE]
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=bad_rpca, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=0, verbose=FALSE),
+               "Row mismatch: rpca_components")
+  
+  bad_spectral <- spectral_sines_dm[1:(total_timepoints_dm-3), , drop=FALSE]
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=bad_spectral,
+                                      run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=0, verbose=FALSE),
+               "Row mismatch: spectral_sines")
 })
 
 test_that("ndx_build_design_matrix errors on invalid TR", {
@@ -254,73 +271,116 @@ test_that("ndx_build_design_matrix errors on invalid TR", {
   expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
                                       run_idx=run_idx_dm, TR=-1, poly_degree=0, verbose=FALSE),
                "single positive number")
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=0, poly_degree=0, verbose=FALSE),
+               "single positive number")
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=NA, poly_degree=0, verbose=FALSE),
+               "single positive number")
 })
 
-test_that("ndx_build_design_matrix returns NULL if no regressors are formed", {
-  run_idx_single_dm <- rep(1, n_time_per_run_dm)
-  X_null <- ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL, 
-                                   run_idx=run_idx_single_dm, TR=TR_test_dm, poly_degree= -1, verbose=FALSE)
-  # With poly_degree = -1 and single run, it should produce an intercept column. 
-  # To get NULL, we need a scenario where even that fails or is not applicable.
-  # If events is such that no task regressors are made, and other components are NULL, and poly_degree is <0 for single run,
-  # it will make an intercept. So, this test condition needs rethinking to truly get NULL.
-  # The function is designed to *at least* add an intercept for a single run if no polys specified.
-  # It returns NULL if X_full_design ends up NULL after filtering empty components OR if total_timepoints_from_run_idx leads to 0-row matrix (from bad run_idx).
-
-  # Test with run_idx implying 0 timepoints (should error earlier, but good to ensure robustness)
+test_that("ndx_build_design_matrix errors on invalid run_idx", {
+  # Test with run_idx implying 0 timepoints
   expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL, 
                                      run_idx=integer(0), TR=2, poly_degree=0, verbose=FALSE),
-               "run_idx implies one or more runs have zero or negative length" # or similar from sampling_frame
-               )
-
-  # If all inputs that could generate columns are NULL or empty, and poly_degree < 0 for single run, result is intercept.
-  # To get NULL from `do.call(cbind, all_regressors_filtered)`: all_regressors_filtered must be empty.
-  # This means no task, no nuisance, and baseline logic also results in nothing (e.g. poly_degree=-1 and multi-run but run_intercepts fail for some reason - unlikely)
-  # The only way for `all_regressors_filtered` to be empty is if no task, no nuisance, and the baseline logic also results in nothing.
-  # This is hard to achieve if poly_degree isn't <0 or if it's a single run (where an intercept is forced if no polys).
-
-  # Let's make events that don't match any HRF condition (if HRFs are provided)
-  hrf_no_match <- create_mock_hrfs(conditions = c("NonExistent"), taps_per_hrf = 8, TR = TR_test_dm)
-  X_no_task_match <- ndx_build_design_matrix(
-                         estimated_hrfs = hrf_no_match, 
-                         events = events_dm, # events_dm has TaskA, TaskB
-                         motion_params = NULL, rpca_components = NULL, spectral_sines = NULL,
-                         run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
-  # Should still have 'intercept' for single run, poly=-1. So ncol=1.
-  expect_equal(ncol(X_no_task_match), 1)
-  expect_true("intercept" %in% colnames(X_no_task_match))
+               "run_idx implies one or more runs have zero or negative length")
   
-  # The most direct way to get NULL is if all inputs are truly empty and poly_degree < 0 for multi-run (no forced intercept)
-  X_truly_empty <- ndx_build_design_matrix(
-                         estimated_hrfs = NULL, 
-                         events = events_dm[0,], # Empty events table
-                         motion_params = NULL, rpca_components = NULL, spectral_sines = NULL,
-                         run_idx = run_idx_dm, # multi-run
-                         TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
-  # This should result in run_intercept_1 and run_intercept_2 for multi-run, poly_degree=-1
-  expect_equal(ncol(X_truly_empty), 2)
-  expect_true(all(c("run_intercept_1", "run_intercept_2") %in% colnames(X_truly_empty)))
-  # Conclusion: It's difficult to make this function return NULL design matrix if run_idx is valid,
-  # as it tries hard to at least include intercepts. It primarily returns NULL if a critical error occurs (like row mismatch after formation).
+  # Test with NA values in run_idx
+  bad_run_idx <- run_idx_dm
+  bad_run_idx[5] <- NA
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = events_dm,
+      motion_params = motion_params_dm,
+      rpca_components = rpca_comps_dm,
+      spectral_sines = spectral_sines_dm,
+      run_idx = bad_run_idx,
+      TR = TR_test_dm,
+      poly_degree = 1,
+      verbose = FALSE
+    ),
+    "run_idx contains NA"
+  )
+  
+  # Test with non-integer values in run_idx
+  bad_run_idx_float <- run_idx_dm
+  bad_run_idx_float[5] <- 1.5
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = events_dm,
+      motion_params = motion_params_dm,
+      rpca_components = rpca_comps_dm,
+      spectral_sines = spectral_sines_dm,
+      run_idx = bad_run_idx_float,
+      TR = TR_test_dm,
+      poly_degree = 1,
+      verbose = FALSE
+    ),
+    "run_idx must contain integer values only"
+  )
+  
+  # Test with infinite values in run_idx
+  bad_run_idx_inf <- run_idx_dm
+  bad_run_idx_inf[5] <- Inf
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = events_dm,
+      motion_params = motion_params_dm,
+      rpca_components = rpca_comps_dm,
+      spectral_sines = spectral_sines_dm,
+      run_idx = bad_run_idx_inf,
+      TR = TR_test_dm,
+      poly_degree = 1,
+      verbose = FALSE
+    ),
+    "run_idx contains NA or non-finite values"
+  )
 })
 
 # Test specific logic for FIR basis generation if complex conditions arise
 test_that("FIR basis generation in ndx_build_design_matrix handles edge cases", {
   run_idx_single_dm <- rep(1, n_time_per_run_dm)
+  events_single_dm <- events_dm[events_dm$blockids == 1,]
+  
   # Case 1: HRF estimate has zero length
   hrf_zero_len <- create_mock_hrfs(conditions = c("TaskA"), taps_per_hrf = 0, TR = TR_test_dm)
   # This should be caught by: if (is.null(hrf_coeffs) || length(hrf_coeffs) == 0)
-  X_fir_zero <- ndx_build_design_matrix(estimated_hrfs = hrf_zero_len, events = events_dm, motion_params = NULL, rpca_components = NULL, 
+  X_fir_zero <- ndx_build_design_matrix(estimated_hrfs = hrf_zero_len, events = events_single_dm, motion_params = NULL, rpca_components = NULL, 
                                       spectral_sines = NULL, run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
   expect_false(any(startsWith(colnames(X_fir_zero), "task_")))
   expect_equal(ncol(X_fir_zero), 1) # Should be just the intercept
 
   # Case 2: No events for a condition listed in HRF table
   hrf_taskC <- create_mock_hrfs(conditions = c("TaskC"), taps_per_hrf = 6, TR = TR_test_dm)
-  X_taskC_no_events <- ndx_build_design_matrix(estimated_hrfs = hrf_taskC, events = events_dm, motion_params = NULL, rpca_components = NULL,
+  X_taskC_no_events <- ndx_build_design_matrix(estimated_hrfs = hrf_taskC, events = events_single_dm, motion_params = NULL, rpca_components = NULL,
                                              spectral_sines = NULL, run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
   expect_false(any(startsWith(colnames(X_taskC_no_events), "task_")))
   expect_equal(ncol(X_taskC_no_events), 1) # Intercept
+  
+  # Case 3: HRF estimate is NULL for a condition
+  hrf_null_estimate <- tibble::tibble(
+    condition = "TaskA",
+    hrf_estimate = list(NULL),
+    taps = list(1:6)
+  )
+  X_null_hrf <- ndx_build_design_matrix(estimated_hrfs = hrf_null_estimate, events = events_single_dm, motion_params = NULL, rpca_components = NULL,
+                                       spectral_sines = NULL, run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
+  expect_false(any(startsWith(colnames(X_null_hrf), "task_")))
+  expect_equal(ncol(X_null_hrf), 1) # Intercept
+  
+  # Case 4: HRF estimate is non-numeric
+  hrf_non_numeric <- tibble::tibble(
+    condition = "TaskA",
+    hrf_estimate = list("not_numeric"),
+    taps = list(1:6)
+  )
+  X_non_numeric_hrf <- ndx_build_design_matrix(estimated_hrfs = hrf_non_numeric, events = events_single_dm, motion_params = NULL, rpca_components = NULL,
+                                              spectral_sines = NULL, run_idx = run_idx_single_dm, TR = TR_test_dm, poly_degree = -1, verbose = FALSE)
+  expect_false(any(startsWith(colnames(X_non_numeric_hrf), "task_")))
+  expect_equal(ncol(X_non_numeric_hrf), 1) # Intercept
 })
 
 test_that("drop_zero_variance option removes constant regressors", {
@@ -338,16 +398,33 @@ test_that("drop_zero_variance option removes constant regressors", {
     drop_zero_variance = TRUE
   )
   expect_false("rpca_comp_1" %in% colnames(X_drop))
+  
+  # Test that intercept columns are NOT removed even if constant
+  X_keep_intercept <- ndx_build_design_matrix(
+    estimated_hrfs = NULL,
+    events = events_dm,
+    motion_params = NULL,
+    rpca_components = const_rpca,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE,
+    drop_zero_variance = TRUE
+  )
+  expect_true("poly0" %in% colnames(X_keep_intercept))
+  expect_true("run_intercept_2" %in% colnames(X_keep_intercept))
+  expect_false("rpca_comp_1" %in% colnames(X_keep_intercept))
 })
-
 
 test_that("non-sequential run_idx are mapped correctly", {
   run_idx_ns <- rep(c(10, 20), each = n_time_per_run_dm)
   events_ns <- events_dm
   events_ns$blockids <- c(10, 10, 20, 20)
 
+  # Test the internal validation function directly with matching events
   info <- ndx:::.ndx_validate_design_inputs(run_idx_ns, motion_params_dm,
-                                            rpca_comps_dm, spectral_sines_dm)
+                                            rpca_comps_dm, spectral_sines_dm, events_ns)
   expect_equal(unique(info$run_idx_mapped), c(1, 2))
   expect_equal(info$run_lengths, c(n_time_per_run_dm, n_time_per_run_dm))
 
@@ -365,27 +442,6 @@ test_that("non-sequential run_idx are mapped correctly", {
   expect_true(is.matrix(X_ns))
   expect_equal(nrow(X_ns), total_timepoints_dm)
 })
-
-test_that("run_idx with NA triggers error", {
-  bad_run_idx <- run_idx_dm
-  bad_run_idx[5] <- NA
-  expect_error(
-    ndx_build_design_matrix(
-      estimated_hrfs = estimated_hrfs_dm,
-      events = events_dm,
-      motion_params = motion_params_dm,
-      rpca_components = rpca_comps_dm,
-      spectral_sines = spectral_sines_dm,
-      run_idx = bad_run_idx,
-      TR = TR_test_dm,
-      poly_degree = 1,
-      verbose = FALSE
-    ),
-    "run_idx contains NA"
-  )
-})
-
-
 
 test_that("ndx_build_design_matrix errors when events blockids are invalid", {
   events_bad <- events_dm
@@ -424,7 +480,8 @@ test_that("non-sequential run_idx are mapped for events", {
   )
   expect_true(is.matrix(X_nonseq))
   expect_equal(nrow(X_nonseq), total_timepoints_dm)
-  expect_true(any(grepl("run_intercept_20", colnames(X_nonseq))))
+  # Note: The run intercept column name should reflect the mapped run ID (2), not the original ID (20)
+  expect_true(any(grepl("run_intercept_2", colnames(X_nonseq))))
 })
                          
 test_that("near-constant regressors are removed when variance below epsilon", {
@@ -444,4 +501,174 @@ test_that("near-constant regressors are removed when variance below epsilon", {
     zero_var_epsilon = 1e-8
   )
   expect_false("rpca_comp_1" %in% colnames(X_drop_near))
+})
+
+test_that("estimated_hrfs validation works correctly", {
+  # Test missing required columns
+  bad_hrfs <- tibble::tibble(
+    condition = "TaskA",
+    # missing hrf_estimate column
+    taps = list(1:6)
+  )
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = bad_hrfs,
+      events = events_dm,
+      motion_params = NULL,
+      rpca_components = NULL,
+      spectral_sines = NULL,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 0,
+      verbose = FALSE
+    ),
+    "estimated_hrfs tibble must contain 'condition' and 'hrf_estimate' columns"
+  )
+  
+  # Test non-tibble input
+  bad_hrfs_df <- data.frame(
+    condition = "TaskA",
+    hrf_estimate = I(list(rnorm(6)))
+  )
+  expect_no_error({
+    X_df_hrfs <- ndx_build_design_matrix(
+      estimated_hrfs = bad_hrfs_df,
+      events = events_dm,
+      motion_params = NULL,
+      rpca_components = NULL,
+      spectral_sines = NULL,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 0,
+      verbose = FALSE
+    )
+  })
+  # Should still work since it's converted to tibble internally
+  expect_true(is.matrix(X_df_hrfs))
+})
+
+test_that("events validation works correctly", {
+  # Test missing blockids column
+  bad_events <- data.frame(
+    onsets = c(5, 15) * TR_test_dm,
+    condition = c("TaskA", "TaskB")
+    # missing blockids column
+  )
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = bad_events,
+      motion_params = NULL,
+      rpca_components = NULL,
+      spectral_sines = NULL,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 0,
+      verbose = FALSE
+    ),
+    "events must be a data.frame containing a 'blockids' column for validation"
+  )
+  
+  # Test non-integer blockids
+  bad_events_float <- events_dm
+  bad_events_float$blockids[1] <- 1.5
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = bad_events_float,
+      motion_params = NULL,
+      rpca_components = NULL,
+      spectral_sines = NULL,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 0,
+      verbose = FALSE
+    ),
+    "events\\$blockids contains values not present in run_idx"
+  )
+  
+  # Test NA blockids
+  bad_events_na <- events_dm
+  bad_events_na$blockids[1] <- NA
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = bad_events_na,
+      motion_params = NULL,
+      rpca_components = NULL,
+      spectral_sines = NULL,
+      run_idx = run_idx_dm,
+      TR = TR_test_dm,
+      poly_degree = 0,
+      verbose = FALSE
+    ),
+    "events\\$blockids contains values not present in run_idx"
+  )
+})
+
+test_that("task regressor generation handles onset timing correctly", {
+  # Test with events at different time points
+  events_timing <- data.frame(
+    onsets = c(0, 10, 20, 30) * TR_test_dm, # Events at different times
+    durations = rep(2 * TR_test_dm, 4),
+    condition = rep("TaskA", 4),
+    blockids = c(1, 1, 2, 2)
+  )
+  
+  hrf_single <- create_mock_hrfs(conditions = "TaskA", taps_per_hrf = 4, TR = TR_test_dm)
+  
+  X_timing <- ndx_build_design_matrix(
+    estimated_hrfs = hrf_single,
+    events = events_timing,
+    motion_params = NULL,
+    rpca_components = NULL,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = -1,
+    verbose = FALSE
+  )
+  
+  expect_true(is.matrix(X_timing))
+  expect_equal(ncol(X_timing), 3) # task_TaskA + run_intercept_1 + run_intercept_2
+  expect_true("task_TaskA" %in% colnames(X_timing))
+  
+  # Check that the task regressor has non-zero values at expected time points
+  task_col <- X_timing[, "task_TaskA"]
+  expect_true(any(task_col != 0)) # Should have some non-zero values
+})
+
+test_that("column naming works correctly with special characters", {
+  # Test with condition names that need make.names() processing
+  special_hrfs <- tibble::tibble(
+    condition = c("Task-A", "Task B", "123Task"),
+    hrf_estimate = list(rnorm(4), rnorm(4), rnorm(4)),
+    taps = list(1:4, 1:4, 1:4)
+  )
+  
+  events_special <- data.frame(
+    onsets = c(5, 15, 25) * TR_test_dm,
+    durations = rep(2 * TR_test_dm, 3),
+    condition = c("Task-A", "Task B", "123Task"),
+    blockids = c(1, 1, 2)
+  )
+  
+  X_special <- ndx_build_design_matrix(
+    estimated_hrfs = special_hrfs,
+    events = events_special,
+    motion_params = NULL,
+    rpca_components = NULL,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE
+  )
+  
+  expect_true(is.matrix(X_special))
+  # Check that column names are valid R names
+  expect_true(all(make.names(colnames(X_special)) == colnames(X_special)))
+  expect_true(any(grepl("task_Task.A", colnames(X_special))))
+  expect_true(any(grepl("task_Task.B", colnames(X_special))))
+  expect_true(any(grepl("task_X123Task", colnames(X_special))))
 })

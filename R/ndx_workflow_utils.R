@@ -32,6 +32,7 @@ ndx_validate_process_subject_inputs <- function(Y_fmri, events, motion_params,
   }
 
   if (!is.data.frame(events)) stop("events must be a data frame.")
+  if (nrow(events) == 0) stop("events data frame must contain at least one event.")
   required_event_cols <- c("onsets", "durations", "condition", "blockids")
   if (!all(required_event_cols %in% names(events))) {
     stop(paste("events data frame must contain columns:",

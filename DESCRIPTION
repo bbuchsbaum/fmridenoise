@@ -33,7 +33,7 @@ Imports:
     digest,
     htmlwidgets,
     htmltools,
-    plotly
+    plotly,
     magrittr
 Suggests:
     testthat (>= 3.0.0),

@@ -34,7 +34,9 @@ ndx_generate_html_report <- function(workflow_output,
   }
 
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-  des_values <- sapply(workflow_output$diagnostics_per_pass, function(d) d$DES)
+  des_values <- sapply(workflow_output$diagnostics_per_pass, function(d) {
+    if (is.null(d$DES)) NA_real_ else d$DES
+  }, USE.NAMES = FALSE)
   des_html <- .create_des_plot(des_values, output_dir)
 
   beta_html <- .create_beta_plot(workflow_output$beta_history_per_pass, output_dir)
@@ -46,7 +48,9 @@ ndx_generate_html_report <- function(workflow_output,
     output_dir
   )
 
-  ljung_vals <- sapply(workflow_output$diagnostics_per_pass, function(d) d$ljung_box_p)
+  ljung_vals <- sapply(workflow_output$diagnostics_per_pass, function(d) {
+    if (is.null(d$ljung_box_p)) NA_real_ else d$ljung_box_p
+  }, USE.NAMES = FALSE)
   ljung_html <- .create_ljung_plot(ljung_vals, output_dir)
 
   carpet_html <- .create_spike_carpet_plot(workflow_output$S_matrix_rpca_final, output_dir)

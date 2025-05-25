@@ -220,6 +220,13 @@ ndx_extract_gdlite_pcs <- function(Y_fmri,
 
   data_for_pca <- residuals_for_pca[, selected_voxel_indices, drop = FALSE]
 
+  # Check if all selected voxels have zero variance
+  pca_variances <- matrixStats::colVars(data_for_pca, na.rm = TRUE)
+  if (all(!is.finite(pca_variances)) || all(pca_variances <= 1e-12)) {
+    warning("All selected voxels have zero or near-zero variance. Cannot perform meaningful PCA. Returning NULL.")
+    return(NULL)
+  }
+
   # --- 4. Perform PCA ---
   pca_results <- tryCatch({
     stats::prcomp(data_for_pca, rank. = n_pcs, center = center, scale. = scale.)
@@ -502,7 +509,9 @@ calculate_tsnr <- function(Y_data, detrend = FALSE, robust = FALSE) {
 
   sd_vals[valid_counts < 2 | sd_vals < 1e-9 | !is.finite(sd_vals)] <- NA_real_
 
-  tsnr_values <- mean_vals / sd_vals
+  # Take absolute value of mean to handle floating point precision issues with detrending
+  # that can result in very small negative means
+  tsnr_values <- abs(mean_vals) / sd_vals
   tsnr_values[!is.finite(tsnr_values)] <- NA_real_
 
   return(tsnr_values)
@@ -706,20 +715,43 @@ build_gdlite_design_matrix <- function(events, run_idx, TR,
                                        poly_degree = 1, n_timepoints) {
   sf <- fmrireg::sampling_frame(blocklens = as.numeric(table(run_idx)), TR = TR)
 
-  task_model_formula <- stats::as.formula(
-    "onsets ~ fmrireg::hrf(condition, basis='spmg1')")
-  event_des <- fmrireg::event_model(task_model_formula,
-                                    data = events,
-                                    block = events$blockids,
-                                    sampling_frame = sf)
-  X_task <- fmrireg::design_matrix(event_des)
-  if (is.null(X_task)) X_task <- matrix(0, nrow = n_timepoints, ncol = 0)
+  # Handle task regressors (skip if events is empty)
+  if (nrow(events) > 0) {
+    task_model_formula <- stats::as.formula(
+      "onsets ~ fmrireg::hrf(condition, basis='spmg1')")
+    event_des <- fmrireg::event_model(task_model_formula,
+                                      data = events,
+                                      block = events$blockids,
+                                      sampling_frame = sf)
+    X_task <- fmrireg::design_matrix(event_des)
+    if (is.null(X_task)) X_task <- matrix(0, nrow = n_timepoints, ncol = 0)
+  } else {
+    # No events, create empty task matrix
+    X_task <- matrix(0, nrow = n_timepoints, ncol = 0)
+  }
 
-  baseline_des <- fmrireg::baseline_model(
-    sframe = sf, basis = "poly", degree = poly_degree)
-  X_poly_intercepts <- fmrireg::design_matrix(baseline_des)
-  if (is.null(X_poly_intercepts)) {
-    X_poly_intercepts <- matrix(1, nrow = n_timepoints, ncol = 1)
+  # Handle polynomial baseline regressors
+  if (is.null(poly_degree) || poly_degree < 0) {
+    # No polynomial trends
+    X_poly_intercepts <- matrix(0, nrow = n_timepoints, ncol = 0)
+  } else if (poly_degree == 0) {
+    # Special case: only run-specific intercepts (fmrireg::baseline_model doesn't accept degree=0)
+    # Create run-specific intercepts manually
+    n_runs <- length(unique(run_idx))
+    X_poly_intercepts <- matrix(0, nrow = n_timepoints, ncol = n_runs)
+    for (i in seq_along(unique(run_idx))) {
+      run_id <- unique(run_idx)[i]
+      X_poly_intercepts[run_idx == run_id, i] <- 1
+    }
+    colnames(X_poly_intercepts) <- paste0("run", unique(run_idx), "_intercept")
+  } else {
+    # poly_degree >= 1: use fmrireg::baseline_model
+    baseline_des <- fmrireg::baseline_model(
+      sframe = sf, basis = "poly", degree = poly_degree)
+    X_poly_intercepts <- fmrireg::design_matrix(baseline_des)
+    if (is.null(X_poly_intercepts)) {
+      X_poly_intercepts <- matrix(1, nrow = n_timepoints, ncol = 1)
+    }
   }
 
   X_parts <- list(task = X_task, poly_intercepts = X_poly_intercepts)
@@ -949,16 +981,19 @@ ndx_run_gdlite <- function(Y_fmri,
   n_timepoints <- nrow(Y_fmri)
   n_voxels <- ncol(Y_fmri)
 
-  blocks_events <- sort(unique(events$blockids))
-  blocks_runs <- sort(unique(run_idx))
-  if (!identical(blocks_events, blocks_runs)) {
-    stop(sprintf(
-      "events$blockids %s do not match run_idx %s",
-      paste(blocks_events, collapse = ","),
-      paste(blocks_runs, collapse = ",")
-    ))
+  # Validate events blockids match run_idx (skip if events is empty)
+  if (nrow(events) > 0) {
+    blocks_events <- sort(unique(as.integer(events$blockids)))
+    blocks_runs <- sort(unique(as.integer(run_idx)))
+    if (!identical(blocks_events, blocks_runs)) {
+      stop(sprintf(
+        "events$blockids %s do not match run_idx %s",
+        paste(blocks_events, collapse = ","),
+        paste(blocks_runs, collapse = ",")
+      ))
+    }
+    events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
   }
-  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
 
   # --- Step 1: Build X_gd (Base Design Matrix) ---
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 1: Building base design matrix X_gd...")

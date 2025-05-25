@@ -55,7 +55,7 @@
 ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
                               order = 2L, global_ar_on_design = TRUE,
                               verbose = TRUE, weights = NULL,
-                              max_ar_failures_prop = 0.3) {
+                              max_ar_failures_prop = 0.3,
                               global_ar_stat = c("mean", "median", "trimmed_mean")) {
 
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {

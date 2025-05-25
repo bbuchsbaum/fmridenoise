@@ -193,15 +193,20 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
     if (n_runs_from_sf > 1) {
       # Split mat_motion_params by run_idx into a list of matrices. Ensure the
       # order of the splits follows the order of unique run indices.
-      split_motion_params <- split(mat_motion_params,
-                                   factor(run_idx, levels = unique(run_idx)))
+      # Use proper row-based splitting to maintain matrix structure
+      split_indices <- split(seq_len(nrow(mat_motion_params)), 
+                           factor(run_idx, levels = unique(run_idx)))
+      split_motion_params <- lapply(split_indices, function(rows) {
+        mat_motion_params[rows, , drop = FALSE]
+      })
+      
       if (length(split_motion_params) != length(sf$blocklens)) {
         stop(sprintf(
           "Number of split motion parameter matrices (%d) does not match number of blocks (%d)",
           length(split_motion_params), length(sf$blocklens)
         ))
       }
-      # Convert data frames in list to matrices
+      # Convert data frames in list to matrices (though they should already be matrices)
       nuisance_arg_for_bm_pass0 <- lapply(split_motion_params, as.matrix)
       # fmrireg might expect this to be a named list if multiple nuisance types, 
       # or an unnamed list if it's just one type of nuisance split by block.

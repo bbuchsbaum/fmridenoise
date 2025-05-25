@@ -382,6 +382,10 @@ test_that(".iterative_select_spectral_pairs returns expected indices", {
   idx <- ndx:::.iterative_select_spectral_pairs(y, U_all, criterion = "BIC", delta_threshold = 2, verbose = FALSE)
   expect_equal(sort(idx), c(1L, 2L))
 
-  idx_none <- ndx:::.iterative_select_spectral_pairs(y, U_all, criterion = "BIC", delta_threshold = 100, verbose = FALSE)
+  # Test with pure noise data and high threshold - should select nothing
+  set.seed(456)
+  y_noise <- rnorm(n_tp)  # Pure noise
+  U_noise <- cbind(rnorm(n_tp), rnorm(n_tp), rnorm(n_tp), rnorm(n_tp))  # Pure noise regressors
+  idx_none <- ndx:::.iterative_select_spectral_pairs(y_noise, U_noise, criterion = "BIC", delta_threshold = 2, verbose = FALSE)
   expect_equal(length(idx_none), 0)
 })

@@ -11,7 +11,9 @@ test_that("mt_res is reset locally without affecting global env", {
     res <- ndx_spectral_sines(short_ts, TR = 1, n_sine_candidates = 1, k_tapers = 5, nw = 3),
     "Spectrum estimation via spec.mtm did not yield valid spec or freq."
   )
-  expect_null(res)
+  expect_true(is.matrix(res))
+  expect_equal(ncol(res), 0)
+  expect_equal(nrow(res), length(short_ts))
   expect_identical(get("mt_res", envir = globalenv()), "global_value")
 
   if (old_exists) {

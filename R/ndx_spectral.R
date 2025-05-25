@@ -66,7 +66,8 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   val <- .validate_spectral_inputs(mean_residual_for_spectrum, TR,
                                    n_sine_candidates,
                                    selection_delta_threshold)
-  if (!is.null(val$error)) return(val$error)
+  if (is.null(val$error)) return(NULL)  # Return NULL for invalid inputs
+  if (is.matrix(val$error)) return(val$error)  # Return empty matrix for non-finite inputs
   mean_residual_for_spectrum <- val$vec
   n_sine_candidates <- val$n_sine_candidates
   selection_delta_threshold <- val$selection_delta_threshold
@@ -135,18 +136,16 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   if (!is.numeric(mean_residual_for_spectrum) ||
       length(mean_residual_for_spectrum) == 0) {
     warning("mean_residual_for_spectrum must be a non-empty numeric vector.")
-    return(list(error = NULL))
+    return(list(error = NULL))  # Return NULL to signal invalid input
   }
   if (!is.numeric(TR) || TR <= 0) {
     warning("TR must be a positive numeric value.")
-    return(list(error = NULL))
+    return(list(error = NULL))  # Return NULL to signal invalid input
   }
 
   if (!all(is.finite(mean_residual_for_spectrum))) {
     warning("mean_residual_for_spectrum contains non-finite values.")
     return(list(error = .empty_spec_matrix(length(mean_residual_for_spectrum))))
-  }
-
   }
 
   default_n_sine_candidates <- 6
@@ -174,7 +173,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   list(vec = vec,
        n_sine_candidates = n_sine_candidates,
        selection_delta_threshold = selection_delta_threshold,
-       error = NULL)
+       error = "valid")  # Signal that validation passed
 }
 
 #' Adjust multitaper parameters for series length

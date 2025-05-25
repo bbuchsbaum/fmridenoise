@@ -373,7 +373,7 @@ NDX_Process_Subject <- function(Y_fmri,
         Y_residuals_for_AR_fit = temp_glm_for_ar_residuals,
         order = opts_whitening$order %||% 2L,
         global_ar_on_design = opts_whitening$global_ar_on_design %||% TRUE,
-        weights = precision_weights_for_pass,
+        weights = NULL,  # Remove precision weights from AR estimation - they're most effective in ridge regression
         max_ar_failures_prop = opts_whitening$max_ar_failures_prop %||% 0.3
       )
       current_pass_results$Y_whitened <- whitening_output$Y_whitened
@@ -464,7 +464,7 @@ NDX_Process_Subject <- function(Y_fmri,
             projection_mats = proj_mats,
             lambda_values = lambda_values,
             na_mask = current_pass_results$na_mask_whitening,
-            weights = precision_weights_for_pass,
+            weights = precision_weights_for_pass,  # Precision weights are most effective in ridge regression
             gcv_lambda = FALSE,
             res_var_scale = res_var_est
           )
@@ -481,7 +481,7 @@ NDX_Process_Subject <- function(Y_fmri,
           X_whitened = current_pass_results$X_whitened,
           K_penalty_diag = K_penalty_diag,
           na_mask = current_pass_results$na_mask_whitening,
-          weights = precision_weights_for_pass
+          weights = precision_weights_for_pass  # Precision weights are most effective in ridge regression
         )
       }
       current_pass_results$ridge_betas_whitened <- ridge_betas_whitened

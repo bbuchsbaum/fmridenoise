@@ -10,7 +10,7 @@ test_that("optimal K is selected on simple synthetic data", {
   X_base <- cbind(1, task)
 
   # dominant noise component (pc1)
-  pc1 <- scale(seq_len(n_time), center = TRUE, scale = FALSE)
+  pc1 <- base::scale(seq_len(n_time), center = TRUE, scale = FALSE)
   pc1 <- pc1 / sqrt(sum(pc1^2))
   all_pcs <- cbind(pc1, rev(pc1))
 
