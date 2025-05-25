@@ -686,8 +686,185 @@ select_optimal_k_gdlite <- function(Y_fmri,
     K_star = K_star,
     selected_pcs = selected_pcs_out,
     median_r2cv_values = median_r2cv_values,
-    all_r2cv_per_K = all_r2cv_per_K_list
+  all_r2cv_per_K = all_r2cv_per_K_list
   ))
+}
+
+#' Build the base GLMdenoise-Lite design matrix
+#'
+#' @param events Data frame of experimental events.
+#' @param run_idx Numeric vector indicating run membership for each timepoint.
+#' @param TR Repetition time in seconds.
+#' @param motion_params Optional matrix of motion parameters.
+#' @param poly_degree Polynomial degree for baseline trends.
+#' @param n_timepoints Number of timepoints in the data.
+#'
+#' @return Numeric design matrix used as the base model.
+#' @keywords internal
+build_gdlite_design_matrix <- function(events, run_idx, TR,
+                                       motion_params = NULL,
+                                       poly_degree = 1, n_timepoints) {
+  sf <- fmrireg::sampling_frame(blocklens = as.numeric(table(run_idx)), TR = TR)
+
+  task_model_formula <- stats::as.formula(
+    "onsets ~ fmrireg::hrf(condition, basis='spmg1')")
+  event_des <- fmrireg::event_model(task_model_formula,
+                                    data = events,
+                                    block = events$blockids,
+                                    sampling_frame = sf)
+  X_task <- fmrireg::design_matrix(event_des)
+  if (is.null(X_task)) X_task <- matrix(0, nrow = n_timepoints, ncol = 0)
+
+  baseline_des <- fmrireg::baseline_model(
+    sframe = sf, basis = "poly", degree = poly_degree)
+  X_poly_intercepts <- fmrireg::design_matrix(baseline_des)
+  if (is.null(X_poly_intercepts)) {
+    X_poly_intercepts <- matrix(1, nrow = n_timepoints, ncol = 1)
+  }
+
+  X_parts <- list(task = X_task, poly_intercepts = X_poly_intercepts)
+  if (!is.null(motion_params)) {
+    if (nrow(motion_params) == n_timepoints) {
+      X_parts$motion <- motion_params
+    } else {
+      warning("Motion parameters provided but row count does not match Y_fmri. Ignoring motion_params.")
+    }
+  }
+
+  X_gd <- do.call(cbind, X_parts)
+  X_gd <- as.matrix(X_gd)
+  storage.mode(X_gd) <- "numeric"
+  if (any(duplicated(colnames(X_gd)))) {
+    colnames(X_gd) <- make.names(colnames(X_gd), unique = TRUE)
+  }
+
+  X_gd
+}
+
+#' Determine the noise pool mask for GLMdenoise-Lite
+#'
+#' @param r2_cv_initial Initial leave-one-run-out R-squared values.
+#' @param tsnr_values Temporal SNR values.
+#' @param r2_thresh_noise_pool R-squared threshold for defining the noise pool.
+#' @param tsnr_thresh_noise_pool tSNR threshold for defining the noise pool.
+#' @param is_single_run Logical flag indicating whether CV failed or only one run.
+#'
+#' @return Logical vector marking voxels in the noise pool.
+#' @keywords internal
+calculate_noise_pool_mask <- function(r2_cv_initial, tsnr_values,
+                                      r2_thresh_noise_pool,
+                                      tsnr_thresh_noise_pool,
+                                      is_single_run) {
+  if (is_single_run) {
+    mask <- tsnr_values > tsnr_thresh_noise_pool
+  } else {
+    mask <- (r2_cv_initial < r2_thresh_noise_pool) &
+      (tsnr_values > tsnr_thresh_noise_pool)
+  }
+  mask[is.na(mask)] <- FALSE
+  mask
+}
+
+#' Extract candidate PCs from noise-pool residuals
+#'
+#' @param Y_fmri Matrix of fMRI data.
+#' @param X_gd Base design matrix.
+#' @param noise_pool_mask Logical vector defining the noise pool.
+#' @param k_max Maximum number of PCs to extract.
+#'
+#' @return List with `pcs` (matrix or NULL) and `k_actual_max` (integer).
+#' @keywords internal
+extract_noise_pool_pcs <- function(Y_fmri, X_gd, noise_pool_mask, k_max) {
+  residuals_from_X_gd <- tryCatch({
+    stats::lm.fit(x = X_gd, y = Y_fmri)$residuals
+  }, error = function(e) {
+    warning(paste("Error fitting GLM (X_gd on Y_fmri) to get residuals for PCA:", e$message))
+    return(NULL)
+  })
+  if (is.null(residuals_from_X_gd)) {
+    return(list(pcs = NULL, k_actual_max = 0L))
+  }
+
+  pcs <- ndx_extract_gdlite_pcs(
+    Y_fmri = residuals_from_X_gd,
+    X_nuisance_base = matrix(0, nrow = nrow(Y_fmri), ncol = 0),
+    n_pcs = k_max,
+    voxel_mask = noise_pool_mask,
+    center = TRUE,
+    scale. = FALSE
+  )
+  if (is.null(pcs) || ncol(pcs) == 0) {
+    list(pcs = NULL, k_actual_max = 0L)
+  } else {
+    list(pcs = pcs, k_actual_max = ncol(pcs))
+  }
+}
+
+#' Define the good voxel mask used for K selection
+#'
+#' @param r2_cv_initial Initial cross-validated R-squared values.
+#' @param tsnr_values tSNR values.
+#' @param r2_thresh_good_voxels Threshold for good voxels.
+#' @param is_single_run Logical indicating single-run or failed CV.
+#' @param n_voxels Total number of voxels.
+#'
+#' @return Logical vector defining the good voxel mask.
+#' @keywords internal
+define_good_voxel_mask <- function(r2_cv_initial, tsnr_values,
+                                   r2_thresh_good_voxels, is_single_run,
+                                   n_voxels) {
+  if (is_single_run) {
+    mask <- tsnr_values > 0
+    if (sum(mask) == 0 && n_voxels > 0) {
+      mask <- !is.na(tsnr_values) & tsnr_values != 0
+      if (sum(mask) == 0 && n_voxels > 0) {
+        mask <- rep(TRUE, n_voxels)
+      }
+    }
+  } else {
+    mask <- r2_cv_initial >= r2_thresh_good_voxels
+  }
+  mask[is.na(mask)] <- FALSE
+  mask
+}
+
+#' Run the final GLM for GLMdenoise-Lite
+#'
+#' @param Y_fmri fMRI data matrix.
+#' @param X_gd Base design matrix.
+#' @param selected_pcs Matrix of selected principal components.
+#' @param K_star Number of selected PCs.
+#'
+#' @return List with `betas` and `residuals` from the final GLM.
+#' @keywords internal
+run_final_glm_gdlite <- function(Y_fmri, X_gd, selected_pcs, K_star) {
+  betas_gdlite <- NULL
+  residuals_gdlite <- NULL
+
+  X_final <- X_gd
+  if (K_star > 0 && !is.null(selected_pcs)) {
+    X_final <- cbind(X_gd, selected_pcs)
+    if (any(duplicated(colnames(X_final)))) {
+      colnames(X_final) <- make.names(colnames(X_final), unique = TRUE)
+    }
+  }
+
+  if (ncol(X_final) > 0) {
+    final_fit <- tryCatch({
+      stats::lm.fit(x = X_final, y = Y_fmri)
+    }, error = function(e) {
+      warning(paste("Error in final GLM fit for GLMdenoise-Lite:", e$message))
+      return(NULL)
+    })
+    if (!is.null(final_fit)) {
+      betas_gdlite <- final_fit$coefficients
+      residuals_gdlite <- final_fit$residuals
+    }
+  } else {
+    warning("Final GLMdenoise design matrix is empty. Cannot perform final fit.")
+  }
+
+  list(betas = betas_gdlite, residuals = residuals_gdlite)
 }
 
 #' @title Run a GLMdenoise-Lite Analysis
@@ -785,50 +962,15 @@ ndx_run_gdlite <- function(Y_fmri,
 
   # --- Step 1: Build X_gd (Base Design Matrix) ---
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 1: Building base design matrix X_gd...")
-  sf <- fmrireg::sampling_frame(blocklens = as.numeric(table(run_idx)), TR = TR)
-  
-  # Task model using canonical HRF (Glover + derivatives often used, spmg1 is simpler starter)
-  # GLMdenoise typically uses Glover + time derivative + dispersion derivative.
-  # For simplicity, starting with spmg1 (like ndx_initial_glm).
-  # This could be a parameter: hrf_basis = "spmg1" or "glover_derivs"
-  task_model_formula <- stats::as.formula("onsets ~ fmrireg::hrf(condition, basis='spmg1')")
-
-  event_des <- fmrireg::event_model(task_model_formula,
-                                    data = events,
-                                    block = events$blockids,
-                                    sampling_frame = sf)
-  X_task <- fmrireg::design_matrix(event_des)
-  if (is.null(X_task)) X_task <- matrix(0, nrow=n_timepoints, ncol=0)
-  
-  # Baseline model (polynomials per run, and run-specific intercepts if poly_degree allows)
-  # fmrireg::baseline_model with basis="poly" and degree=poly_degree handles run intercepts correctly.
-  # No nuisance regressors are included at this stage, so rely on the
-  # default `nuisance_list = NULL` behavior. Passing an empty list would
-  # cause an error inside `fmrireg::baseline_model` because it expects the
-  # list length and row counts to match the sampling frame.
-  baseline_des <- fmrireg::baseline_model(sframe = sf,
-                                          basis = "poly",
-                                          degree = poly_degree)
-  X_poly_intercepts <- fmrireg::design_matrix(baseline_des)
-  if (is.null(X_poly_intercepts)) X_poly_intercepts <- matrix(1, nrow=n_timepoints, ncol=1)
-
-  X_gd_parts <- list(task = X_task, poly_intercepts = X_poly_intercepts)
-  if (!is.null(motion_params)) {
-    if (nrow(motion_params) == n_timepoints) {
-      X_gd_parts$motion <- motion_params
-    } else {
-      warning("Motion parameters provided but row count does not match Y_fmri. Ignoring motion_params.")
-    }
-  }
-  X_gd <- do.call(cbind, X_gd_parts)
-  X_gd <- as.matrix(X_gd)
-  storage.mode(X_gd) <- "numeric"
-  if (any(duplicated(colnames(X_gd)))) {
-      colnames(X_gd) <- make.names(colnames(X_gd), unique=TRUE)
-  }
+  X_gd <- build_gdlite_design_matrix(events = events,
+                                     run_idx = run_idx,
+                                     TR = TR,
+                                     motion_params = motion_params,
+                                     poly_degree = poly_degree,
+                                     n_timepoints = n_timepoints)
   if (ncol(X_gd) == 0) {
       warning("X_gd is empty. Cannot proceed with GLMdenoise-Lite.")
-      return(NULL) # Or a more informative error list
+      return(NULL)
   }
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  X_gd built with %d regressors.", ncol(X_gd)))
 
@@ -842,20 +984,19 @@ ndx_run_gdlite <- function(Y_fmri,
   tsnr_values <- calculate_tsnr(Y_fmri, detrend = detrend_for_tsnr)
   tsnr_values[is.na(tsnr_values)] <- 0 # Replace NA tSNR with 0 for mask creation
 
-  # --- Step 4: Define Noise Pool Mask --- 
+  # --- Step 4: Define Noise Pool Mask ---
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 4: Defining noise pool mask...")
-  if (is_single_run_or_cv_failed) {
-    if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Single run or LORO CV failed, using only TSNR for noise pool definition.")
-    noise_pool_mask <- (tsnr_values > tsnr_thresh_noise_pool)
-  } else {
-    noise_pool_mask <- (r2_cv_initial < r2_thresh_noise_pool) & (tsnr_values > tsnr_thresh_noise_pool)
-  }
-  noise_pool_mask[is.na(noise_pool_mask)] <- FALSE # Ensure no NAs in mask
+  noise_pool_mask <- calculate_noise_pool_mask(
+    r2_cv_initial,
+    tsnr_values,
+    r2_thresh_noise_pool,
+    tsnr_thresh_noise_pool,
+    is_single_run_or_cv_failed
+  )
   if (sum(noise_pool_mask) == 0) {
     warning("Noise pool mask is empty (0 voxels). PCA will not be performed. Returning K_star=0.")
-    # Fallback: return list indicating no PCs selected
     return(list(selected_pcs = NULL, K_star = 0, X_gd = X_gd, r2_cv_initial = r2_cv_initial,
-                tsnr_values = tsnr_values, noise_pool_mask = noise_pool_mask, 
+                tsnr_values = tsnr_values, noise_pool_mask = noise_pool_mask,
                 good_voxel_mask_for_k_selection = rep(FALSE, n_voxels),
                 median_r2cv_by_K = numeric(0), all_r2cv_per_K = list(),
                 betas_gdlite = if(perform_final_glm) stats::lm.fit(X_gd, Y_fmri)$coefficients else NULL,
@@ -864,59 +1005,34 @@ ndx_run_gdlite <- function(Y_fmri,
   }
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Noise pool defined with %d voxels.", sum(noise_pool_mask)))
 
-  # --- Step 5: Extract Candidate PCs from Noise Pool Residuals --- 
+  # --- Step 5: Extract Candidate PCs from Noise Pool Residuals ---
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 5: Extracting candidate PCs from noise pool residuals...")
-  residuals_from_X_gd <- tryCatch({
-    stats::lm.fit(x = X_gd, y = Y_fmri)$residuals
-  }, error = function(e) {
-    warning(paste("Error fitting GLM (X_gd on Y_fmri) to get residuals for PCA:", e$message))
-    return(NULL)
-  })
-  if (is.null(residuals_from_X_gd)) {
-      warning("Could not obtain residuals for PCA. Cannot proceed with PC extraction.")
-      return(list(selected_pcs = NULL, K_star = 0, X_gd = X_gd, r2_cv_initial = r2_cv_initial,
-                tsnr_values = tsnr_values, noise_pool_mask = noise_pool_mask, 
-                good_voxel_mask_for_k_selection = rep(FALSE, n_voxels), # Placeholder
-                median_r2cv_by_K = numeric(0), all_r2cv_per_K = list(),
-                betas_gdlite = if(perform_final_glm) stats::lm.fit(X_gd, Y_fmri)$coefficients else NULL,
-                residuals_gdlite = if(perform_final_glm) stats::lm.fit(X_gd, Y_fmri)$residuals else NULL,
-                all_candidate_pcs = NULL))
-  }
-  
-  # PCA is on residuals from X_gd, so X_nuisance_base for ndx_extract_gdlite_pcs should be empty or intercept-only.
-  # Using an empty matrix for X_nuisance_base as residuals_from_X_gd are already residualized.
-  all_candidate_pcs <- ndx_extract_gdlite_pcs(
-    Y_fmri = residuals_from_X_gd, # PCA on residuals
-    X_nuisance_base = matrix(0, nrow = n_timepoints, ncol = 0), # No further residualization needed
-    n_pcs = k_max,
-    voxel_mask = noise_pool_mask,
-    center = TRUE, # Standard for PCA on residuals
-    scale. = FALSE 
-  )
-  if (is.null(all_candidate_pcs) || ncol(all_candidate_pcs) == 0) {
+  pcs_info <- extract_noise_pool_pcs(Y_fmri, X_gd, noise_pool_mask, k_max)
+  all_candidate_pcs <- pcs_info$pcs
+  k_actual_max <- pcs_info$k_actual_max
+  if (k_actual_max == 0) {
       warning("No PCs extracted from noise pool. Returning K_star=0.")
-      k_actual_max <- 0
-      all_candidate_pcs <- NULL # Ensure it's consistently NULL if empty
+      return(list(selected_pcs = NULL, K_star = 0, X_gd = X_gd, r2_cv_initial = r2_cv_initial,
+                  tsnr_values = tsnr_values, noise_pool_mask = noise_pool_mask,
+                  good_voxel_mask_for_k_selection = rep(FALSE, n_voxels),
+                  median_r2cv_by_K = numeric(0), all_r2cv_per_K = list(),
+                  betas_gdlite = if(perform_final_glm) stats::lm.fit(X_gd, Y_fmri)$coefficients else NULL,
+                  residuals_gdlite = if(perform_final_glm) stats::lm.fit(X_gd, Y_fmri)$residuals else NULL,
+                  all_candidate_pcs = NULL))
   } else {
-      k_actual_max <- ncol(all_candidate_pcs)
       if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Extracted %d candidate PCs (up to k_max=%d).", k_actual_max, k_max))
   }
   
 
   # --- Step 6: Define Good Voxel Mask for K selection --- 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 6: Defining good voxel mask for K selection...")
-  if (is_single_run_or_cv_failed) {
-    if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("  Single run or LORO CV failed, using all voxels (if any) or TSNR > 0 for good voxel K selection mask.")
-    # Fallback for good voxels: use those with TSNR > 0 or simply all voxels if TSNR is also problematic
-    good_voxel_mask_for_k_selection <- tsnr_values > 0 
-    if (sum(good_voxel_mask_for_k_selection) == 0 && n_voxels > 0) { # If TSNR > 0 yields nothing, take all non-NA TSNR voxels
-        good_voxel_mask_for_k_selection <- !is.na(tsnr_values) & tsnr_values != 0 # Avoid all-zero tsnr if possible
-         if (sum(good_voxel_mask_for_k_selection) == 0 && n_voxels > 0) good_voxel_mask_for_k_selection <- rep(TRUE, n_voxels) # Absolute fallback
-    }
-  } else {
-    good_voxel_mask_for_k_selection <- (r2_cv_initial >= r2_thresh_good_voxels)
-  }
-  good_voxel_mask_for_k_selection[is.na(good_voxel_mask_for_k_selection)] <- FALSE # Ensure no NAs
+  good_voxel_mask_for_k_selection <- define_good_voxel_mask(
+    r2_cv_initial,
+    tsnr_values,
+    r2_thresh_good_voxels,
+    is_single_run_or_cv_failed,
+    n_voxels
+  )
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("  Good voxel mask for K selection defined with %d voxels.", sum(good_voxel_mask_for_k_selection)))
 
   # --- Step 7: Select Optimal K_star --- 
@@ -941,33 +1057,14 @@ ndx_run_gdlite <- function(Y_fmri,
   K_star <- optimal_k_info$K_star
   selected_pcs <- optimal_k_info$selected_pcs # This will be NULL if K_star is 0
 
-  # --- Step 8: Final GLM (Optional) --- 
+  # --- Step 8: Final GLM (Optional) ---
   betas_gdlite <- NULL
   residuals_gdlite <- NULL
   if (perform_final_glm) {
     if (getOption("fmridenoise.verbose_gdlite", FALSE)) message(sprintf("Step 8: Performing final GLM with K_star = %d PCs...", K_star))
-    X_final_gdlite <- X_gd
-    if (K_star > 0 && !is.null(selected_pcs)) {
-      X_final_gdlite <- cbind(X_gd, selected_pcs)
-      if (any(duplicated(colnames(X_final_gdlite)))) {
-         colnames(X_final_gdlite) <- make.names(colnames(X_final_gdlite), unique=TRUE)
-      }
-    }
-    
-    if (ncol(X_final_gdlite) > 0) {
-        final_fit <- tryCatch({
-            stats::lm.fit(x = X_final_gdlite, y = Y_fmri)
-        }, error = function(e) {
-            warning(paste("Error in final GLM fit for GLMdenoise-Lite:", e$message))
-            return(NULL)
-        })
-        if(!is.null(final_fit)){
-            betas_gdlite <- final_fit$coefficients
-            residuals_gdlite <- final_fit$residuals
-        }
-    } else {
-        warning("Final GLMdenoise design matrix X_final_gdlite is empty. Cannot perform final fit.")
-    }
+    final_res <- run_final_glm_gdlite(Y_fmri, X_gd, selected_pcs, K_star)
+    betas_gdlite <- final_res$betas
+    residuals_gdlite <- final_res$residuals
   }
 
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("GLMdenoise-Lite Analysis Finished.")
