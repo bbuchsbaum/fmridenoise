@@ -58,103 +58,20 @@ NDX_Process_Subject <- function(Y_fmri,
 
   if (verbose) message("Starting ND-X Processing for Subject...")
 
-  # --- 0. Validate inputs and merge default user_options ---
-  # Validate primary inputs similar to ndx_initial_glm
-  if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) {
-    stop("Y_fmri must be a numeric matrix (timepoints x voxels).")
-  }
-  n_timepoints <- nrow(Y_fmri)
-  if (n_timepoints == 0) stop("Y_fmri has zero timepoints.")
-  if (ncol(Y_fmri) == 0) stop("Y_fmri has zero voxels.")
-
-  if (!is.matrix(motion_params) || !is.numeric(motion_params)) {
-    stop("motion_params must be a numeric matrix.")
-  }
-  if (nrow(motion_params) != n_timepoints) {
-    stop("Number of rows in motion_params must match Y_fmri.")
-  }
-
-  if (!is.data.frame(events)) stop("events must be a data frame.")
-  required_event_cols <- c("onsets", "durations", "condition", "blockids")
-  if (!all(required_event_cols %in% names(events))) {
-    stop(paste("events data frame must contain columns:",
-               paste(required_event_cols, collapse = ", ")))
-  }
-
-  if (!is.numeric(run_idx) || length(run_idx) != n_timepoints) {
-    stop("run_idx must be a numeric vector with length matching nrow(Y_fmri).")
-  }
-  if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
-    stop("TR must be a single positive number.")
-  }
-
-  # Default general workflow options
-  max_passes <- user_options$max_passes %||% 3L
-  min_des_gain_convergence <- user_options$min_des_gain_convergence %||% 0.005
-  min_rho_noise_projection_convergence <- user_options$min_rho_noise_projection_convergence %||% 0.01
-
-  # Default options for sub-modules (can be centralized or handled per module call)
-  opts_pass0       <- user_options$opts_pass0 %||% list(poly_degree = 1) # Ensure poly_degree is available for build_design_matrix
-
-  default_opts_hrf <- list(
-    hrf_fir_taps = 12L,
-    hrf_fir_span_seconds = 24,
-    good_voxel_R2_threshold = 0.05,
-    cv_folds = 5L,
-    lambda1_grid = 10^seq(-2, 1, length.out = 5),
-    lambda2_grid = 10^seq(-3, 0, length.out = 5),
-    hrf_min_good_voxels = 50L,
-    return_full_model = FALSE,
-    hrf_cluster_method = "none", # Default to no clustering
-    num_hrf_clusters = 1L,       # Consistent with no clustering
-    hrf_cluster_merge_corr_thresh = 0.95,
-    hrf_cluster_min_size = 5L,
-    # Options for sparse event handling in HRF estimation (NDX-12)
-    hrf_min_events_for_fir = 6L, 
-    hrf_low_event_threshold = 12L,
-    hrf_target_event_count_for_lambda_scaling = 20L,
-    hrf_use_canonical_fallback_for_ultra_sparse = FALSE, # Default to attempting scaled/damped FIR
-    # New options for project_hrf_cone
-    hrf_cone_nonneg = TRUE,
-    hrf_cone_unimodal = TRUE,
-    hrf_cone_normalize_area = TRUE,
-    verbose_hrf = FALSE # Added from previous refactor, ensure it's here
-  )
-  opts_hrf <- utils::modifyList(default_opts_hrf, user_options$opts_hrf %||% list())
-
-  opts_rpca        <- user_options$opts_rpca %||% list()
-  opts_spectral    <- user_options$opts_spectral %||% list()
-  opts_whitening   <- user_options$opts_whitening %||% list()
-  # opts_ridge       <- user_options$opts_ridge %||% list() # This was the old line
-  # Default options for ridge, now more comprehensive for anisotropic and annihilation
-  default_opts_ridge <- list(
-    lambda_ridge = 1.0, # Isotropic lambda, for fallback or if anisotropic_ridge_enable=FALSE
-    anisotropic_ridge_enable = TRUE,
-    lambda_signal = 0.1, 
-    lambda_noise_rpca = 1.0, 
-    lambda_noise_spectral = 1.0,
-    lambda_noise_other = 1.0,
-    ridge_gcv_folds = 5L,
-    ridge_update_lambda_aggressiveness = FALSE,
-    # Lambdas for annihilation mode components - these are now part of the main ridge options
-    lambda_noise_gdlite = 1.0, 
-    lambda_noise_ndx_unique = 1.0 
-  )
-  opts_ridge <- utils::modifyList(default_opts_ridge, user_options$opts_ridge %||% list())
-
-  # Default options for Annihilation mode (controls call to ndx_run_gdlite)
-  default_opts_annihilation <- list(
-    annihilation_enable_mode = FALSE,
-    annihilation_gdlite_poly_degree = 1,
-    annihilation_gdlite_k_max = 30L,
-    annihilation_gdlite_r2_thresh_noise_pool = 0.05,
-    annihilation_gdlite_tsnr_thresh_noise_pool = 30,
-    annihilation_gdlite_r2_thresh_good_voxels = 0.05
-  )
-  opts_annihilation <- utils::modifyList(default_opts_annihilation, user_options$opts_annihilation %||% list())
-
-  task_regressor_names <- user_options$task_regressor_names_for_extraction %||% character(0)
-  verbose_workflow <- user_options$verbose %||% TRUE # Use a distinct name for workflow verbosity
+  ndx_validate_process_subject_inputs(Y_fmri, events, motion_params, run_idx, TR)
+  opts <- ndx_prepare_workflow_options(user_options)
+  max_passes <- opts$max_passes
+  min_des_gain_convergence <- opts$min_des_gain_convergence
+  min_rho_noise_projection_convergence <- opts$min_rho_noise_projection_convergence
+  opts_pass0 <- opts$opts_pass0
+  opts_hrf <- opts$opts_hrf
+  opts_rpca <- opts$opts_rpca
+  opts_spectral <- opts$opts_spectral
+  opts_whitening <- opts$opts_whitening
+  opts_ridge <- opts$opts_ridge
+  opts_annihilation <- opts$opts_annihilation
+  task_regressor_names <- opts$task_regressor_names_for_extraction
+  verbose_workflow <- opts$verbose
 
   # Initialize storage for per-pass results
   diagnostics_per_pass <- list()
@@ -168,45 +85,12 @@ NDX_Process_Subject <- function(Y_fmri,
 
   # Store orthogonalized nuisance components from the previous pass
   prev_U_NDX_Nuisance <- NULL
+  # --- Optional Annihilation Mode setup ---
+  annihilation_info <- ndx_run_annihilation_setup(Y_fmri, events, motion_params, run_idx, TR,
+                                       opts_annihilation, verbose_workflow)
+  U_GD_Lite_fixed_PCs <- annihilation_info$selected_pcs
+  gdlite_initial_results <- annihilation_info$gdlite_results
 
-  # --- Call ndx_run_gdlite if Annihilation Mode is enabled (once before the loop) ---
-  if (opts_annihilation$annihilation_enable_mode) {
-    if (verbose_workflow) message("Annihilation Mode enabled: Running GLMdenoise-Lite procedure upfront...")
-    
-    # Set verbose option for gdlite functions if main workflow verbose is on
-    # This assumes gdlite functions use getOption("fmridenoise.verbose_gdlite", FALSE)
-    original_gdlite_verbose_opt <- getOption("fmridenoise.verbose_gdlite")
-    if (verbose_workflow) {
-        options(fmridenoise.verbose_gdlite = TRUE)
-    } else {
-        options(fmridenoise.verbose_gdlite = FALSE)
-    }
-
-    gdlite_initial_results <- ndx_run_gdlite(
-      Y_fmri = Y_fmri,
-      events = events,
-      run_idx = run_idx,
-      TR = TR,
-      motion_params = motion_params, # Pass original motion params
-      poly_degree = opts_annihilation$annihilation_gdlite_poly_degree,
-      k_max = opts_annihilation$annihilation_gdlite_k_max,
-      r2_thresh_noise_pool = opts_annihilation$annihilation_gdlite_r2_thresh_noise_pool,
-      tsnr_thresh_noise_pool = opts_annihilation$annihilation_gdlite_tsnr_thresh_noise_pool,
-      r2_thresh_good_voxels = opts_annihilation$annihilation_gdlite_r2_thresh_good_voxels,
-      perform_final_glm = FALSE # We only need the PCs for now
-    )
-    
-    # Restore original gdlite verbose option
-    options(fmridenoise.verbose_gdlite = original_gdlite_verbose_opt)
-
-    if (!is.null(gdlite_initial_results) && !is.null(gdlite_initial_results$selected_pcs) && ncol(gdlite_initial_results$selected_pcs) > 0) {
-      U_GD_Lite_fixed_PCs <- gdlite_initial_results$selected_pcs
-      if (verbose_workflow) message(sprintf("  GLMdenoise-Lite selected %d PCs. These will be used as a fixed basis.", ncol(U_GD_Lite_fixed_PCs)))
-    } else {
-      if (verbose_workflow) message("  GLMdenoise-Lite did not select any PCs or failed. Annihilation mode will effectively be standard ND-X.")
-      U_GD_Lite_fixed_PCs <- NULL # Ensure it's NULL if no PCs
-    }
-  } # End of upfront ndx_run_gdlite call
 
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
