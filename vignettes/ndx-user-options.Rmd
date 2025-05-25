@@ -127,6 +127,14 @@ opts_ridge = list(
 )
 ```
 
+The ridge module is now fully modular. Helper functions such as
+`ndx_compute_projection_matrices()` and `ndx_gcv_tune_lambda_parallel()`
+allow you to construct custom penalty matrices and perform GCV tuning.
+`ndx_update_lambda_aggressiveness()` and
+`ndx_estimate_res_var_whitened()` aid in adaptive lambda selection, while
+`ndx_extract_task_betas()` provides a convenient way to obtain the final
+task-related coefficients.
+
 ### Annihilation Mode
 
 The `opts_annihilation` list controls the Annihilation Mode, which integrates GLMdenoise-like functionality:
