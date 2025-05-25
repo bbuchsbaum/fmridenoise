@@ -785,6 +785,17 @@ ndx_run_gdlite <- function(Y_fmri,
   n_timepoints <- nrow(Y_fmri)
   n_voxels <- ncol(Y_fmri)
 
+  blocks_events <- sort(unique(events$blockids))
+  blocks_runs <- sort(unique(run_idx))
+  if (!identical(blocks_events, blocks_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(blocks_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
+
   # --- Step 1: Build X_gd (Base Design Matrix) ---
   if (getOption("fmridenoise.verbose_gdlite", FALSE)) message("Step 1: Building base design matrix X_gd...")
   sf <- fmrireg::sampling_frame(blocklens = as.numeric(table(run_idx)), TR = TR)
