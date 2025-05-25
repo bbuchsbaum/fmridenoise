@@ -26,6 +26,27 @@ test_that("ndx_solve_anisotropic_ridge computes correct betas for a simple case"
   expect_equal(as.vector(betas_ridge[,1]), as.vector(expected_betas_manual), tolerance = 1e-6)
 })
 
+test_that("ndx_solve_anisotropic_ridge works with full penalty matrix", {
+  set.seed(123)
+  n_tp <- 100
+  n_reg <- 2
+  n_vox <- 1
+  true_b <- c(2, -3)
+  lambda_val <- 0.5
+
+  td <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 0.1)
+  K_mat <- diag(lambda_val, n_reg)
+
+  betas <- ndx_solve_anisotropic_ridge(td$Y, td$X,
+                                       K_penalty_mat = K_mat,
+                                       use_penalty_matrix = TRUE)
+
+  expected <- solve(crossprod(td$X) + K_mat) %*% crossprod(td$X, td$Y)
+  dimnames(betas) <- NULL
+  dimnames(expected) <- NULL
+  expect_equal(betas, expected, tolerance = 1e-6)
+})
+
 test_that("ndx_solve_anisotropic_ridge handles K_penalty_diag = 0 (OLS-like)", {
   set.seed(456)
   n_tp <- 50
@@ -109,8 +130,18 @@ test_that("ndx_solve_anisotropic_ridge input validation works", {
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good[1:10, ], K_diag_good), "Y_whitened and X_whitened must have the same number of rows", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good[1]), "K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, "a"), "K_penalty_diag must be a numeric vector", fixed = TRUE) 
-  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, c(-0.1, 0.1, 0.1)), "All elements of K_penalty_diag must be non-negative", fixed = TRUE) 
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, c(-0.1, 0.1, 0.1)), "All elements of K_penalty_diag must be non-negative", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, na_mask=rep(TRUE, 5)), "na_mask must be a logical vector with length equal to nrow(Y_whitened).", fixed = TRUE)
+
+  w_bad_neg <- c(rep(1, nrow(Y_good) - 1), -1)
+  expect_warning(res_neg <- ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, weights = w_bad_neg),
+                 "weights must contain non-negative finite numbers", fixed = TRUE)
+  expect_null(res_neg)
+
+  w_bad_inf <- c(rep(1, nrow(Y_good) - 1), Inf)
+  expect_warning(res_inf <- ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, weights = w_bad_inf),
+                 "weights must contain non-negative finite numbers", fixed = TRUE)
+  expect_null(res_inf)
   
   Y_short_for_warn <- Y_good[1:2, , drop=FALSE]
   X_wide_for_warn <- X_good[1:2, , drop=FALSE] 
@@ -195,7 +226,8 @@ test_that("ndx_compute_projection_matrices constructs valid projectors", {
   U_noise <- matrix(rnorm(20), nrow = 4)
   proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 4)
   expect_true(all(dim(proj$P_Noise) == c(4,4)))
-  expect_true(all(diag(proj$P_Signal + proj$P_Noise) <= 1.0001))
+  expect_equal(proj$P_Noise + proj$P_Signal, diag(4), tolerance = 1e-6)
+  expect_true(max(abs(proj$P_Noise %*% proj$P_Signal)) < 1e-6)
 })
 
 test_that("ndx_update_lambda_aggressiveness adjusts lambda", {
@@ -213,6 +245,26 @@ test_that("ndx_solve_anisotropic_ridge works with projection matrices", {
                                        projection_mats = proj,
                                        lambda_values = lambda_vals)
   expect_equal(dim(betas), c(2,1))
+})
+
+test_that("full penalty from projection matrices matches manual", {
+  td <- .create_ridge_test_data(30, 2, 1, c(2, -1), noise_sd = 0.1)
+  U_noise <- diag(2)[,1,drop=FALSE]
+  proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 2)
+  lambda_vals <- list(lambda_parallel = 0.5, lambda_perp_signal = 0.05)
+
+  K_manual <- lambda_vals$lambda_parallel * proj$P_Noise +
+              lambda_vals$lambda_perp_signal * proj$P_Signal
+
+  betas_pm <- ndx_solve_anisotropic_ridge(td$Y, td$X,
+                                          projection_mats = proj,
+                                          lambda_values = lambda_vals,
+                                          use_penalty_matrix = TRUE)
+
+  expected <- solve(crossprod(td$X) + K_manual) %*% crossprod(td$X, td$Y)
+  dimnames(betas_pm) <- NULL
+  dimnames(expected) <- NULL
+  expect_equal(betas_pm, expected, tolerance = 1e-6)
 })
 
 test_that("ndx_solve_anisotropic_ridge handles weights", {

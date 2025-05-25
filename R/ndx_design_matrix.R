@@ -11,10 +11,13 @@
 #' @param rpca_components Optional matrix of RPCA regressors.
 #' @param spectral_sines Optional matrix of spectral sine/cosine regressors.
 #' @param run_idx Integer vector indicating run membership for each time-point.
-#' @param TR Repetition time, in seconds.
+#' @param TR Positive repetition time, in seconds.
 #' @param poly_degree Degree of Legendre polynomial baseline (per run).
 #' @param verbose Logical flag for verbose console output.
 #' @param drop_zero_variance Logical flag to drop near-zero variance regressors.
+#' @param zero_var_epsilon Numeric tolerance for detecting near-zero variance
+#'   regressors. Columns with variance below this value are considered
+#'   near-constant. Default is 1e-8.
 #'
 #' @return Numeric matrix with one column per regressor (or `NULL` on failure).
 #' @importFrom fmrireg sampling_frame event_model design_matrix baseline_model
@@ -29,9 +32,21 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     TR,
                                     poly_degree = NULL,
                                     verbose = TRUE,
-                                    drop_zero_variance = FALSE) {
+                                    drop_zero_variance = FALSE,
+                                    zero_var_epsilon = 1e-8) {
 
   # 1. Basic validation ----------------------------------------------------
+  info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines, events)
+  sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
+
+  # Map events$blockids to sequential run numbers if needed
+  events_mapped <- events
+  if (!is.null(events_mapped)) {
+    events_mapped$blockids <- info$run_map[as.character(events_mapped$blockids)]
+  }
+  if (!(is.numeric(TR) && length(TR) == 1 && TR > 0)) {
+    stop("TR must be a single positive number.")
+  }
   info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
   sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
 
@@ -48,8 +63,19 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     events$blockids <- as.integer(info$run_mapping[as.character(events$blockids)])
   }
 
+  blocks_events <- sort(unique(events$blockids))
+  if (!identical(blocks_events, info$unique_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(info$unique_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = info$unique_runs)), , drop = FALSE]
+
+
   # 2. Task regressors -----------------------------------------------------
-  task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events, sf, TR, verbose)
+  task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events_mapped, sf, TR, verbose)
 
   # 3. Nuisance regressors -------------------------------------------------
   nuisance_list_components <- .ndx_generate_nuisance_regressors(motion_params, rpca_components, spectral_sines, verbose)
@@ -60,7 +86,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   # 5. Combine -------------------------------------------------------------
   regressor_list <- c(list(task = task_mat), nuisance_list_components, list(baseline = baseline_mat))
   X_full <- .ndx_combine_regressors(regressor_list, info$total_tp,
-                                    verbose, drop_zero_variance)
+                                    verbose, drop_zero_variance,
+                                    zero_var_epsilon)
 
   if (verbose && !is.null(X_full)) {
     message(sprintf("Constructed X_full_design with %d timepoints and %d regressors.", 
@@ -97,6 +124,10 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   run_idx_mapped <- as.integer(run_mapping[as.character(run_idx)])
   unique_runs <- sort(unique(run_idx_mapped))
   run_lengths <- as.numeric(table(factor(run_idx_mapped, levels = unique_runs)))
+                                        spectral_sines,
+                                        events = NULL) {
+  unique_runs <- sort(unique(run_idx))
+  run_lengths <- as.numeric(table(factor(run_idx, levels = unique_runs)))
 
   if (length(run_lengths) == 0 || sum(run_lengths) == 0) {
     stop("run_idx implies one or more runs have zero or negative length.")
@@ -117,11 +148,25 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   check_rows(rpca_components, "rpca_components")
   check_rows(spectral_sines,  "spectral_sines")
 
+  if (!is.null(events)) {
+    if (!is.data.frame(events) || !("blockids" %in% names(events))) {
+      stop("events must be a data.frame containing a 'blockids' column for validation.")
+    }
+    invalid_blocks <- setdiff(unique(events$blockids), unique_runs)
+    if (length(invalid_blocks) > 0) {
+      stop(sprintf("events$blockids contains values not present in run_idx: %s",
+                   paste(invalid_blocks, collapse = ", ")))
+    }
+  }
+
+  run_map <- setNames(seq_along(unique_runs), unique_runs)
+
   list(unique_runs   = unique_runs,
        run_lengths   = run_lengths,
        total_tp      = total_tp,
        run_idx_mapped = run_idx_mapped,
        run_mapping   = run_mapping)
+
 }
 
 #' @keywords internal
@@ -331,10 +376,12 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 }
 
 #' @keywords internal
+#' @param zero_var_epsilon Numeric tolerance for detecting near-zero variance columns.
 .ndx_combine_regressors <- function(reg_list,
                                    total_tp,
                                    verbose = TRUE,
-                                   drop_zero_variance = FALSE) {
+                                   drop_zero_variance = FALSE,
+                                   zero_var_epsilon = 1e-8) {
   valid_components <- list()
   for (name in names(reg_list)) {
     comp <- reg_list[[name]]
@@ -376,7 +423,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 
   if (!is.null(X_combined) && ncol(X_combined) > 0) {
     col_vars <- apply(X_combined, 2, stats::var, na.rm = TRUE)
-    potential_zero_var_cols <- colnames(X_combined)[col_vars < (.Machine$double.eps * 100)]
+    potential_zero_var_cols <- colnames(X_combined)[col_vars < zero_var_epsilon]
     intercept_patterns <- "^(poly0|intercept|run_intercept_)"
     zero_var_cols_to_warn <- potential_zero_var_cols[!grepl(intercept_patterns, potential_zero_var_cols, ignore.case = TRUE)]
     if (length(zero_var_cols_to_warn) > 0 && verbose) {
@@ -389,4 +436,4 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     }
   }
   return(X_combined)
-} 
+}

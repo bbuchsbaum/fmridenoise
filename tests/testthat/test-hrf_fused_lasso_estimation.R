@@ -27,7 +27,8 @@ X <- get_fir_design_matrix_for_condition(
   events_df = events_df,
   sampling_frame = sf,
   fir_taps = hrf_length,
-  TR = TR
+  TR = TR,
+  verbose = FALSE
 )
 
 noise <- as.numeric(stats::arima.sim(list(ar = c(0.4, -0.2)), n = n_time, sd = 0.1))

@@ -51,27 +51,26 @@ events <- data.frame(
 )
 
 # Workflow options (reused from tests)
-user_opts <- list(
-  opts_pass0 = list(poly_degree = 1),
-  opts_hrf = list(
-    hrf_fir_taps = 6,
-    hrf_fir_span_seconds = 12,
-    good_voxel_R2_threshold = -Inf,
-    lambda1_grid = c(0.1),
-    lambda2_grid = c(0.1),
-    cv_folds = 2,
-    hrf_min_good_voxels = 1,
-    hrf_cluster_method = "none",
-    num_hrf_clusters = 1
-  ),
-  opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1),
-  opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.1),
-  opts_whitening = list(global_ar_on_design = FALSE, max_ar_failures_prop = 0.5),
-  opts_ridge = list(lambda_ridge = 0.5),
-  max_passes = 1,
-  min_des_gain_convergence = -Inf,
-  min_rho_noise_projection_convergence = -Inf
+user_opts <- ndx_default_user_options()
+user_opts$opts_pass0$poly_degree <- 1
+user_opts$opts_hrf <- list(
+  hrf_fir_taps = 6,
+  hrf_fir_span_seconds = 12,
+  good_voxel_R2_threshold = -Inf,
+  lambda1_grid = c(0.1),
+  lambda2_grid = c(0.1),
+  cv_folds = 2,
+  hrf_min_good_voxels = 1,
+  hrf_cluster_method = "none",
+  num_hrf_clusters = 1
 )
+user_opts$opts_rpca <- list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1)
+user_opts$opts_spectral <- list(n_sine_candidates = 2, nyquist_guard_factor = 0.1)
+user_opts$opts_whitening <- list(global_ar_on_design = FALSE, max_ar_failures_prop = 0.5)
+user_opts$opts_ridge <- list(lambda_ridge = 0.5)
+user_opts$max_passes <- 1
+user_opts$min_des_gain_convergence <- -Inf
+user_opts$min_rho_noise_projection_convergence <- -Inf
 
 # --- Run without an initial spike mask ---
 res_no_mask <- NDX_Process_Subject(

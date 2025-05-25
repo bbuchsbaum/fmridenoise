@@ -1,6 +1,6 @@
-#' ND-X User Options Reference
-#'
-#' This provides documentation for all configuration options available in the
+#' @title ND-X User Options Reference
+#' @description
+#' This documentation describes all configuration options available in the
 #' ND-X package functions. Most functions accept a `user_options` parameter,
 #' which is a list containing these configuration options organized into
 #' sub-lists for different modules.
@@ -66,7 +66,7 @@
 #' \describe{
 #'   \item{`order`}{Integer, AR order. Default: 2}
 #'   \item{`global_ar_on_design`}{Logical, apply global AR on design. Default: TRUE}
-#'   \item{`max_ar_failures_prop`}{Numeric, maximum proportion of AR failures. Default: 0.1}
+#'   \item{`max_ar_failures_prop`}{Numeric, maximum proportion of AR failures. Default: 0.3}
 #' }
 #'
 #' @section Ridge Options:
