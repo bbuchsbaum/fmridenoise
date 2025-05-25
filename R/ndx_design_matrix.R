@@ -36,42 +36,20 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     zero_var_epsilon = 1e-8) {
 
   # 1. Basic validation ----------------------------------------------------
-  info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines, events)
-  sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
-
-  # Map events$blockids to sequential run numbers if needed
-  events_mapped <- events
-  if (!is.null(events_mapped)) {
-    events_mapped$blockids <- info$run_map[as.character(events_mapped$blockids)]
-  }
   if (!(is.numeric(TR) && length(TR) == 1 && TR > 0)) {
     stop("TR must be a single positive number.")
   }
-  info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
+
+  info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components,
+                                      spectral_sines, events)
   sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
 
+  events_mapped <- events
+  if (!is.null(events_mapped)) {
+    events_mapped$blockids <- info$run_mapping[as.character(events_mapped$blockids)]
+  }
+
   mapped_run_idx <- info$run_idx_mapped
-
-  if (!is.null(events) && "blockids" %in% names(events)) {
-    if (any(is.na(events$blockids) | !is.finite(events$blockids) |
-            events$blockids != floor(events$blockids))) {
-      stop("events$blockids contains NA, non-finite, or non-integer values.")
-    }
-    if (!all(as.character(events$blockids) %in% names(info$run_mapping))) {
-      stop("events$blockids contain values not present in run_idx.")
-    }
-    events$blockids <- as.integer(info$run_mapping[as.character(events$blockids)])
-  }
-
-  blocks_events <- sort(unique(events$blockids))
-  if (!identical(blocks_events, info$unique_runs)) {
-    stop(sprintf(
-      "events$blockids %s do not match run_idx %s",
-      paste(blocks_events, collapse = ","),
-      paste(info$unique_runs, collapse = ",")
-    ))
-  }
-  events <- events[order(factor(events$blockids, levels = info$unique_runs)), , drop = FALSE]
 
 
   # 2. Task regressors -----------------------------------------------------
@@ -106,7 +84,9 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 .ndx_validate_design_inputs <- function(run_idx,
                                         motion_params,
                                         rpca_components,
-                                        spectral_sines) {
+                                        spectral_sines,
+                                        events = NULL) {
+
   if (length(run_idx) == 0) {
     stop("run_idx implies one or more runs have zero or negative length.")
   }
@@ -119,15 +99,11 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     stop("run_idx must contain integer values only.")
   }
 
-  unique_vals <- sort(unique(run_idx))
-  run_mapping <- setNames(seq_along(unique_vals), as.character(unique_vals))
+  unique_vals   <- sort(unique(run_idx))
+  run_mapping   <- setNames(seq_along(unique_vals), as.character(unique_vals))
   run_idx_mapped <- as.integer(run_mapping[as.character(run_idx)])
-  unique_runs <- sort(unique(run_idx_mapped))
-  run_lengths <- as.numeric(table(factor(run_idx_mapped, levels = unique_runs)))
-                                        spectral_sines,
-                                        events = NULL) {
-  unique_runs <- sort(unique(run_idx))
-  run_lengths <- as.numeric(table(factor(run_idx, levels = unique_runs)))
+  unique_runs   <- sort(unique(run_idx_mapped))
+  run_lengths   <- as.numeric(table(factor(run_idx_mapped, levels = unique_runs)))
 
   if (length(run_lengths) == 0 || sum(run_lengths) == 0) {
     stop("run_idx implies one or more runs have zero or negative length.")
@@ -159,13 +135,11 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     }
   }
 
-  run_map <- setNames(seq_along(unique_runs), unique_runs)
-
-  list(unique_runs   = unique_runs,
-       run_lengths   = run_lengths,
-       total_tp      = total_tp,
+  list(unique_runs    = unique_runs,
+       run_lengths    = run_lengths,
+       total_tp       = total_tp,
        run_idx_mapped = run_idx_mapped,
-       run_mapping   = run_mapping)
+       run_mapping    = run_mapping)
 
 }
 
