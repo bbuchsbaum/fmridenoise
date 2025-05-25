@@ -284,6 +284,97 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   res
 }
 
+#' Calculate Information Criterion for spectral regression
+#'
+#' Computes either BIC or AIC for the linear model \code{y ~ X}. Used internally
+#' when selecting spectral regressors.
+#'
+#' @keywords internal
+.calc_spectral_ic <- function(y, X, criterion = c("BIC", "AIC")) {
+  criterion <- match.arg(criterion)
+  fit <- stats::lm.fit(X, y)
+  rss <- sum(fit$residuals^2)
+  n <- length(y)
+  k <- ncol(X)
+  sigma2 <- rss / n
+  if (criterion == "BIC") {
+    n * log(sigma2) + k * log(n)
+  } else {
+    n * log(sigma2) + 2 * k
+  }
+}
+
+#' Iteratively select spectral regressor pairs based on an IC
+#'
+#' Given a matrix of candidate sine/cosine pairs, this helper greedily adds the
+#' pair that most improves the chosen information criterion. Selection stops when
+#' improvement is below \code{delta_threshold}.
+#'
+#' @keywords internal
+.iterative_select_spectral_pairs <- function(y, U_candidates,
+                                            criterion = c("BIC", "AIC"),
+                                            delta_threshold = 2,
+                                            verbose = FALSE) {
+  criterion <- match.arg(criterion)
+  n_pairs <- ncol(U_candidates) %/% 2
+  if (n_pairs < 1) return(integer(0))
+
+  base_X <- matrix(1, nrow = length(y), ncol = 1)
+  base_ic <- .calc_spectral_ic(y, base_X, criterion)
+  if (verbose) {
+    message(sprintf("[Select_SSR] Base IC (intercept-only): %.4f (criterion: %s)",
+                    base_ic, criterion))
+  }
+
+  selected <- integer(0)
+  remaining <- seq_len(n_pairs)
+  current_X <- base_X
+
+  iter <- 0
+  repeat {
+    iter <- iter + 1
+    best_ic <- Inf
+    best_pair <- NA
+    if (verbose) {
+      message(sprintf(
+        "  [Select_SSR] Iteration %d, current_base_ic: %.4f, selected pairs: %s, remaining pairs: %s",
+        iter, base_ic, paste(selected, collapse = ","), paste(remaining, collapse = ",")
+      ))
+    }
+
+    for (idx in remaining) {
+      cols <- (2 * (idx - 1) + 1):(2 * idx)
+      X_tmp <- cbind(current_X, U_candidates[, cols, drop = FALSE])
+      ic_val <- .calc_spectral_ic(y, X_tmp, criterion)
+      if (verbose) message(sprintf("    Trying pair %d (IC = %.4f)", idx, ic_val))
+      if (ic_val < best_ic) {
+        best_ic <- ic_val
+        best_pair <- idx
+      }
+    }
+
+    if (is.na(best_pair)) break
+
+    if (verbose) message(sprintf(
+      "    Best pair %d improvement %.4f",
+      best_pair, base_ic - best_ic
+    ))
+
+    if ((base_ic - best_ic) > delta_threshold) {
+      cols_to_add <- (2 * (best_pair - 1) + 1):(2 * best_pair)
+      current_X <- cbind(current_X, U_candidates[, cols_to_add, drop = FALSE])
+      base_ic <- best_ic
+      selected <- c(selected, best_pair)
+      remaining <- setdiff(remaining, best_pair)
+      if (length(remaining) == 0) break
+    } else {
+      break
+    }
+  }
+
+  selected
+}
+
 #' Select Spectral Regressors via Information Criterion
 #'
 #' Given a set of candidate sine/cosine regressors, iteratively add the pair
@@ -339,76 +430,13 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
     return(res_empty)
   }
 
-  calc_ic <- function(y, X) {
-    fit <- stats::lm.fit(X, y)
-    rss <- sum(fit$residuals^2)
-    n <- length(y)
-    k <- ncol(X) 
-    sigma2 <- rss / n # MLE of variance (common for ICs)
-    # Classical BIC/AIC: n*log(RSS/n) + k*log(n) or n*log(RSS/n) + 2k. 
-    # Our n*log(sigma2) is equivalent to n*log(RSS/n).
-    ic_val <- if (criterion == "BIC") {
-      n * log(sigma2) + k * log(n)
-    } else { 
-      n * log(sigma2) + 2 * k
-    }
-    return(ic_val)
-  }
-
-  base_X <- matrix(1, nrow = length(y), ncol = 1)
-  base_ic <- calc_ic(y, base_X)
-  if (verbose) message(sprintf("[Select_SSR] Base IC (intercept-only): %.4f (criterion: %s)", base_ic, criterion))
-  
-  selected <- integer(0) 
-  remaining <- seq_len(n_pairs) 
-  current_X <- base_X 
-
-  iter <- 0
-  repeat {
-    iter <- iter + 1
-    if (verbose && iter > n_pairs +1 ) { message("Select_SSR: Breaking runaway loop"); break} # safety break
-    if (verbose) message(sprintf("  [Select_SSR] Iteration %d, current_base_ic: %.4f, selected pairs: %s, remaining pairs: %s", 
-                               iter, base_ic, paste(selected,collapse=","), paste(remaining,collapse=",")))
-    best_ic_this_iter <- Inf 
-    best_pair_this_iter <- NA 
-
-    for (idx in remaining) {
-      cols <- (2 * (idx - 1) + 1):(2 * idx)
-      X_tmp <- cbind(current_X, U_candidates[, cols, drop = FALSE])
-      ic_val <- calc_ic(y, X_tmp)
-      if (verbose) message(sprintf("    Trying pair %d (cols %d-%d), IC = %.4f", idx, cols[1], cols[2], ic_val))
-      if (ic_val < best_ic_this_iter) {
-        best_ic_this_iter <- ic_val
-        best_pair_this_iter <- idx
-      }
-    }
-
-    if (is.na(best_pair_this_iter)) {
-        if (verbose) message("    No best pair found in this iteration (all remaining pairs resulted in non-improvement or Inf IC).")
-        break 
-    }
-
-    if (verbose) message(sprintf("    Iteration %d: Best pair to add is %d with IC = %.4f (improvement from %.4f is %.4f)", 
-                               iter, best_pair_this_iter, best_ic_this_iter, base_ic, base_ic - best_ic_this_iter))
-
-    if ((base_ic - best_ic_this_iter) > delta_threshold) { 
-      cols_to_add <- (2 * (best_pair_this_iter - 1) + 1):(2 * best_pair_this_iter)
-      current_X <- cbind(current_X, U_candidates[, cols_to_add, drop = FALSE])
-      base_ic <- best_ic_this_iter 
-      selected <- c(selected, best_pair_this_iter)
-      remaining <- setdiff(remaining, best_pair_this_iter)
-      if (verbose) message(sprintf("    Pair %d ADDED. New base_ic: %.4f. Selected so far: %s", 
-                                 best_pair_this_iter, base_ic, paste(selected, collapse=",")))
-      if (length(remaining) == 0) {
-          if (verbose) message("    No more pairs remaining to test.")
-          break 
-      }
-    } else {
-      if (verbose) message(sprintf("    Best pair %d did not meet delta_threshold (%.4f <= %.4f). Stopping.", 
-                                 best_pair_this_iter, base_ic - best_ic_this_iter, delta_threshold))
-      break 
-    }
-  }
+  selected <- .iterative_select_spectral_pairs(
+    y = y,
+    U_candidates = U_candidates,
+    criterion = criterion,
+    delta_threshold = delta_threshold,
+    verbose = verbose
+  )
 
   if (length(selected) == 0) {
       if (verbose) message("[Select_SSR] No pairs selected. Returning 0-column matrix with attributes.")

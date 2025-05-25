@@ -337,12 +337,51 @@ test_that("Select_Significant_Spectral_Regressors selects multiple good pairs an
   selected_high_delta <- Select_Significant_Spectral_Regressors(y_test, U_candidates_simple, criterion = "BIC", delta_threshold = 100) 
   expect_true(!is.null(selected_high_delta) && ncol(selected_high_delta) == 2, 
               label = "selected_high_delta: Expected 1 pair (2 cols)")
-  if (!is.null(selected_high_delta) && ncol(selected_high_delta) == 2) { 
+  if (!is.null(selected_high_delta) && ncol(selected_high_delta) == 2) {
     expect_true(all(colnames(selected_high_delta) %in% c("s1","c1")),
                 label = "selected_high_delta: Colnames should be s1, c1")
-    expect_equal(attr(selected_high_delta, "freq_hz"), freq1, 
+    expect_equal(attr(selected_high_delta, "freq_hz"), freq1,
                  label = "selected_high_delta: freq_hz attribute")
-    expect_equal(attr(selected_high_delta, "selected_pair_indices"), 1L, 
+    expect_equal(attr(selected_high_delta, "selected_pair_indices"), 1L,
                  label = "selected_high_delta: selected_pair_indices attribute")
   }
+})
+
+test_that(".calc_spectral_ic computes IC values correctly", {
+  set.seed(123)
+  y <- rnorm(50)
+  X <- cbind(1, rnorm(50))
+
+  bic_val <- ndx:::.calc_spectral_ic(y, X, "BIC")
+  aic_val <- ndx:::.calc_spectral_ic(y, X, "AIC")
+
+  fit <- lm.fit(X, y)
+  rss <- sum(fit$residuals^2)
+  n <- length(y)
+  k <- ncol(X)
+  sigma2 <- rss / n
+
+  expect_equal(bic_val, n * log(sigma2) + k * log(n))
+  expect_equal(aic_val, n * log(sigma2) + 2 * k)
+  expect_gt(bic_val, aic_val)
+})
+
+test_that(".iterative_select_spectral_pairs returns expected indices", {
+  set.seed(321)
+  n_tp <- 200; TR <- 1
+  t_sec <- (seq_len(n_tp) - 1) * TR
+  freq1 <- 0.05
+  freq2 <- 0.15
+  y <- sin(2*pi*freq1*t_sec) * 2 + sin(2*pi*freq2*t_sec) + rnorm(n_tp, sd = 0.5)
+
+  U1 <- cbind(sin(2*pi*freq1*t_sec), cos(2*pi*freq1*t_sec))
+  U2 <- cbind(sin(2*pi*freq2*t_sec), cos(2*pi*freq2*t_sec))
+  U3 <- cbind(rnorm(n_tp), rnorm(n_tp))
+  U_all <- cbind(U1, U2, U3)
+
+  idx <- ndx:::.iterative_select_spectral_pairs(y, U_all, criterion = "BIC", delta_threshold = 2, verbose = FALSE)
+  expect_equal(sort(idx), c(1L, 2L))
+
+  idx_none <- ndx:::.iterative_select_spectral_pairs(y, U_all, criterion = "BIC", delta_threshold = 100, verbose = FALSE)
+  expect_equal(length(idx_none), 0)
 })
