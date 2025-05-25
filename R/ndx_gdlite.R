@@ -24,10 +24,6 @@
 #'   Defaults to `0.2`.
 #' @param center Logical, whether to center the data before PCA (passed to `stats::prcomp`). Defaults to `TRUE`.
 #' @param scale. Logical, whether to scale the data before PCA (passed to `stats::prcomp`). Defaults to `FALSE`.
-#' @param run_idx Optional. Numeric vector indicating run membership for each
-#'   timepoint. Currently not used but reserved for future extensions like
-#'   run-wise PCA.
-#'
 #' @return A matrix containing the extracted temporal principal components
 #'   (timepoints x `n_pcs`). Returns `NULL` if critical errors occur (e.g.,
 #'   `n_pcs` is invalid or no valid voxels for PCA).
@@ -77,8 +73,7 @@ ndx_extract_gdlite_pcs <- function(Y_fmri,
                                    min_variance_voxels = NULL,
                                    max_variance_voxels_pca_prop = 0.2,
                                    center = TRUE,
-                                   scale. = FALSE,
-                                   run_idx = NULL) {
+                                   scale. = FALSE) {
 
   # --- 1. Input Validation ---
   if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) {
