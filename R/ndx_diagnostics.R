@@ -361,6 +361,9 @@ ndx_generate_html_report <- function(workflow_output,
 #' ratio and category (if applicable), convergence information (number of passes),
 #' final rho noise projection, and all final adaptive hyperparameters.
 #' Downstream tools can parse this certificate to verify denoising quality.
+#' The workflow hash included in the JSON is computed from the diagnostics and
+#' key settings rather than the full `workflow_output` object to avoid
+#' excessive memory usage.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
 #' @param output_path File path to save the JSON sidecar. Defaults to
@@ -401,7 +404,13 @@ ndx_generate_json_certificate <- function(workflow_output,
       lambda_perp_signal = val_or_na(last_diag$lambda_perp_signal)
     ),
     timestamp = as.character(Sys.time()),
-    workflow_hash = digest::digest(workflow_output)
+    workflow_hash = digest::digest(list(
+      diagnostics = workflow_output$diagnostics_per_pass,
+      settings = list(
+        num_passes_completed = workflow_output$num_passes_completed,
+        annihilation_mode_active = val_or_na(workflow_output$annihilation_mode_active)
+      )
+    ))
   )
 
   jsonlite::write_json(cert_list, output_path, pretty = TRUE, auto_unbox = TRUE)
