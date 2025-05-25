@@ -26,6 +26,27 @@ test_that("ndx_solve_anisotropic_ridge computes correct betas for a simple case"
   expect_equal(as.vector(betas_ridge[,1]), as.vector(expected_betas_manual), tolerance = 1e-6)
 })
 
+test_that("ndx_solve_anisotropic_ridge works with full penalty matrix", {
+  set.seed(123)
+  n_tp <- 100
+  n_reg <- 2
+  n_vox <- 1
+  true_b <- c(2, -3)
+  lambda_val <- 0.5
+
+  td <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 0.1)
+  K_mat <- diag(lambda_val, n_reg)
+
+  betas <- ndx_solve_anisotropic_ridge(td$Y, td$X,
+                                       K_penalty_mat = K_mat,
+                                       use_penalty_matrix = TRUE)
+
+  expected <- solve(crossprod(td$X) + K_mat) %*% crossprod(td$X, td$Y)
+  dimnames(betas) <- NULL
+  dimnames(expected) <- NULL
+  expect_equal(betas, expected, tolerance = 1e-6)
+})
+
 test_that("ndx_solve_anisotropic_ridge handles K_penalty_diag = 0 (OLS-like)", {
   set.seed(456)
   n_tp <- 50
@@ -213,6 +234,26 @@ test_that("ndx_solve_anisotropic_ridge works with projection matrices", {
                                        projection_mats = proj,
                                        lambda_values = lambda_vals)
   expect_equal(dim(betas), c(2,1))
+})
+
+test_that("full penalty from projection matrices matches manual", {
+  td <- .create_ridge_test_data(30, 2, 1, c(2, -1), noise_sd = 0.1)
+  U_noise <- diag(2)[,1,drop=FALSE]
+  proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 2)
+  lambda_vals <- list(lambda_parallel = 0.5, lambda_perp_signal = 0.05)
+
+  K_manual <- lambda_vals$lambda_parallel * proj$P_Noise +
+              lambda_vals$lambda_perp_signal * proj$P_Signal
+
+  betas_pm <- ndx_solve_anisotropic_ridge(td$Y, td$X,
+                                          projection_mats = proj,
+                                          lambda_values = lambda_vals,
+                                          use_penalty_matrix = TRUE)
+
+  expected <- solve(crossprod(td$X) + K_manual) %*% crossprod(td$X, td$Y)
+  dimnames(betas_pm) <- NULL
+  dimnames(expected) <- NULL
+  expect_equal(betas_pm, expected, tolerance = 1e-6)
 })
 
 test_that("ndx_solve_anisotropic_ridge handles weights", {
