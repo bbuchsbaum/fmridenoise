@@ -1,17 +1,15 @@
-#' Helper: Robust PCA on a Single Run
+#' Basic Helper: Robust PCA on a Single Run
 #'
-#' Performs RPCA on a single run's residual matrix and extracts voxel-space
-#' components along with diagnostic information.
+#' Simplified wrapper performing RPCA on a run's residual matrix and returning
+#' voxel-space components and diagnostics.
 #'
 #' @param E_run Numeric matrix of residuals (timepoints x voxels).
 #' @param k_target Integer target rank for the low-rank component.
-#' @param opts List of options. Recognized elements: `rpca_lambda_auto`,
-#'   `rpca_lambda_fixed`, `rpca_mu`, `rpca_term_delta`, `rpca_max_iter`,
-#'   `rpca_trace`, `spike_mad_thresh`, and `spike_percentile_thresh`.
+#' @param opts List of options controlling the RPCA step.
 #' @return List with elements `V_r`, `glitch_ratio`, `S_matrix_TxV`,
-#'   and `spike_TR_mask`. Returns basic empty structures if input is invalid.
+#'   and `spike_TR_mask`.
 #' @keywords internal
-.ndx_rpca_single_run <- function(E_run, k_target = 1L, opts = list()) {
+.ndx_basic_rpca_single_run <- function(E_run, k_target = 1L, opts = list()) {
   if (!is.matrix(E_run) || nrow(E_run) == 0 || ncol(E_run) == 0) {
     return(list(
       V_r = NULL,
@@ -44,38 +42,6 @@
 
   rpca_args <- list(
     M = E_t,
-=======
-#' Run RPCA for a Single Run
-#'
-#' Internal helper used by `ndx_rpca_temporal_components_multirun`.
-#' Performs RPCA on a single run's residual matrix and extracts the
-#' voxel-space components.
-#'
-#' @param Er Numeric matrix of residuals for one run (Time x Voxels).
-#' @param run_name Character run label used in messages.
-#' @param opts List of options controlling the RPCA step.
-#' @return List with elements `V_r`, `S_r_t`, `spike_mask` and `glitch_ratio`.
-#' @keywords internal
-.ndx_rpca_single_run <- function(Er, run_name, opts) {
-  spike_mask <- if (nrow(Er) > 0) rep(FALSE, nrow(Er)) else logical(0)
-
-  if (nrow(Er) == 0 || ncol(Er) == 0) {
-    warning(sprintf("Residuals for run %s are empty (dims: %s). Skipping RPCA for this run.",
-                    run_name, paste(dim(Er), collapse = "x")))
-    return(list(V_r = NULL, S_r_t = NULL, spike_mask = spike_mask, glitch_ratio = NA))
-  }
-
-  Er_t <- t(Er)
-  lambda_r <- if (opts$rpca_lambda_auto) {
-    1 / sqrt(max(dim(Er_t)))
-  } else {
-    if (is.null(opts$rpca_lambda_fixed))
-      stop("rpca_lambda_fixed must be provided if rpca_lambda_auto is FALSE.")
-    opts$rpca_lambda_fixed
-  }
-
-  rpca_call_args <- list(
-    M = Er_t,
     lambda = lambda_r,
     term.delta = opts$rpca_term_delta,
     max.iter = opts$rpca_max_iter,
@@ -127,7 +93,7 @@
   )
 }
 
-#' Helper: Merge Voxel Components
+#' Basic Helper: Merge Voxel Components
 #'
 #' Combines a list of voxel-space component matrices into a global basis.
 #'
@@ -136,8 +102,8 @@
 #' @param strategy "concat_svd" or "iterative".
 #' @return Matrix `V_global` or `NULL` if merging fails.
 #' @keywords internal
-.ndx_merge_voxel_components <- function(V_list, k_target, 
-                                        strategy = c("concat_svd", "iterative")) {
+.ndx_basic_merge_voxel_components <- function(V_list, k_target,
+                                              strategy = c("concat_svd", "iterative")) {
   strategy <- match.arg(strategy)
   V_list_valid <- Filter(function(x) is.matrix(x) && ncol(x) > 0, V_list)
   if (length(V_list_valid) == 0 || k_target <= 0) return(NULL)
@@ -152,8 +118,42 @@
 
   .grassmann_merge_iterative(V_list_valid, k_target)
 }
+#' Run RPCA for a Single Run
+#'
+#' Internal helper used by `ndx_rpca_temporal_components_multirun`.
+#' Performs RPCA on a single run's residual matrix and extracts the
+#' voxel-space components.
+#'
+#' @param Er Numeric matrix of residuals for one run (Time x Voxels).
+#' @param run_name Character run label used in messages.
+#' @param opts List of options controlling the RPCA step.
+#' @return List with elements `V_r`, `S_r_t`, `spike_mask` and `glitch_ratio`.
+#' @keywords internal
+.ndx_rpca_single_run <- function(Er, run_name, opts) {
+  spike_mask <- if (nrow(Er) > 0) rep(FALSE, nrow(Er)) else logical(0)
 
+  if (nrow(Er) == 0 || ncol(Er) == 0) {
+    warning(sprintf("Residuals for run %s are empty (dims: %s). Skipping RPCA for this run.",
+                    run_name, paste(dim(Er), collapse = "x")))
+    return(list(V_r = NULL, S_r_t = NULL, spike_mask = spike_mask, glitch_ratio = NA))
+  }
 
+  Er_t <- t(Er)
+  lambda_r <- if (opts$rpca_lambda_auto) {
+    1 / sqrt(max(dim(Er_t)))
+  } else {
+    if (is.null(opts$rpca_lambda_fixed))
+      stop("rpca_lambda_fixed must be provided if rpca_lambda_auto is FALSE.")
+    opts$rpca_lambda_fixed
+  }
+
+  rpca_call_args <- list(
+    M = Er_t,
+    lambda = lambda_r,
+    term.delta = opts$rpca_term_delta,
+    max.iter = opts$rpca_max_iter,
+    trace = opts$rpca_trace
+  )
 
   if (!is.null(opts$rpca_mu)) {
     rpca_call_args$mu <- opts$rpca_mu
@@ -360,5 +360,4 @@
   })
   do.call(rbind, C_r_list)
 }
-
 
