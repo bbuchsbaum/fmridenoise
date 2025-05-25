@@ -875,7 +875,7 @@ project_hrf_cone <- function(h,
     pam_fit <- cluster::pam(t(Y_for_clustering), k = num_clusters, diss = FALSE, metric="euclidean", stand = FALSE)
   }, error = function(e) {
     warning(sprintf("K-Medoids clustering (pam) failed: %s. Assigning all to cluster 1.", e$message))
-    pam_fit <<- NULL # Ensure it's NULL in outer scope on error
+    pam_fit <- NULL # Keep pam_fit local on error
   })
   
   if (is.null(pam_fit)) {
