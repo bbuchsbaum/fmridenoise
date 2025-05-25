@@ -341,6 +341,44 @@ test_that("drop_zero_variance option removes constant regressors", {
 })
 
 
+test_that("non-sequential run_idx are mapped correctly", {
+  run_idx_ns <- rep(c(10, 20), each = n_time_per_run_dm)
+  events_ns <- events_dm
+  events_ns$blockids <- c(10, 10, 20, 20)
+
+  info <- ndx:::.ndx_validate_design_inputs(run_idx_ns, motion_params_dm,
+                                            rpca_comps_dm, spectral_sines_dm)
+  expect_equal(unique(info$run_idx_mapped), c(1, 2))
+  expect_equal(info$run_lengths, c(n_time_per_run_dm, n_time_per_run_dm))
+
+  X_ns <- ndx_build_design_matrix(
+    estimated_hrfs = estimated_hrfs_dm,
+    events = events_ns,
+    motion_params = motion_params_dm,
+    rpca_components = rpca_comps_dm,
+    spectral_sines = spectral_sines_dm,
+    run_idx = run_idx_ns,
+    TR = TR_test_dm,
+    poly_degree = 1,
+    verbose = FALSE
+  )
+  expect_true(is.matrix(X_ns))
+  expect_equal(nrow(X_ns), total_timepoints_dm)
+})
+
+test_that("run_idx with NA triggers error", {
+  bad_run_idx <- run_idx_dm
+  bad_run_idx[5] <- NA
+  expect_error(
+    ndx_build_design_matrix(
+      estimated_hrfs = estimated_hrfs_dm,
+      events = events_dm,
+      motion_params = motion_params_dm,
+      rpca_components = rpca_comps_dm,
+      spectral_sines = spectral_sines_dm,
+      run_idx = bad_run_idx,
+})
+
 test_that("ndx_build_design_matrix errors when events blockids are invalid", {
   events_bad <- events_dm
   events_bad$blockids[1] <- 99
@@ -356,6 +394,8 @@ test_that("ndx_build_design_matrix errors when events blockids are invalid", {
       poly_degree = 1,
       verbose = FALSE
     ),
+    "run_idx contains NA"
+  )
     "events\$blockids"
   )
 })

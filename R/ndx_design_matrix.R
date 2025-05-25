@@ -50,6 +50,19 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
   sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
 
+  mapped_run_idx <- info$run_idx_mapped
+
+  if (!is.null(events) && "blockids" %in% names(events)) {
+    if (any(is.na(events$blockids) | !is.finite(events$blockids) |
+            events$blockids != floor(events$blockids))) {
+      stop("events$blockids contains NA, non-finite, or non-integer values.")
+    }
+    if (!all(as.character(events$blockids) %in% names(info$run_mapping))) {
+      stop("events$blockids contain values not present in run_idx.")
+    }
+    events$blockids <- as.integer(info$run_mapping[as.character(events$blockids)])
+  }
+
   blocks_events <- sort(unique(events$blockids))
   if (!identical(blocks_events, info$unique_runs)) {
     stop(sprintf(
@@ -60,6 +73,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   }
   events <- events[order(factor(events$blockids, levels = info$unique_runs)), , drop = FALSE]
 
+
   # 2. Task regressors -----------------------------------------------------
   task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events_mapped, sf, TR, verbose)
 
@@ -67,7 +81,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   nuisance_list_components <- .ndx_generate_nuisance_regressors(motion_params, rpca_components, spectral_sines, verbose)
   
   # 4. Baseline regressors -------------------------------------------------
-  baseline_mat <- .ndx_generate_baseline_regressors(run_idx, sf, poly_degree, verbose)
+  baseline_mat <- .ndx_generate_baseline_regressors(mapped_run_idx, sf, poly_degree, verbose)
 
   # 5. Combine -------------------------------------------------------------
   regressor_list <- c(list(task = task_mat), nuisance_list_components, list(baseline = baseline_mat))
@@ -92,6 +106,24 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 .ndx_validate_design_inputs <- function(run_idx,
                                         motion_params,
                                         rpca_components,
+                                        spectral_sines) {
+  if (length(run_idx) == 0) {
+    stop("run_idx implies one or more runs have zero or negative length.")
+  }
+
+  if (any(is.na(run_idx) | !is.finite(run_idx))) {
+    stop("run_idx contains NA or non-finite values.")
+  }
+
+  if (any(run_idx != floor(run_idx))) {
+    stop("run_idx must contain integer values only.")
+  }
+
+  unique_vals <- sort(unique(run_idx))
+  run_mapping <- setNames(seq_along(unique_vals), as.character(unique_vals))
+  run_idx_mapped <- as.integer(run_mapping[as.character(run_idx)])
+  unique_runs <- sort(unique(run_idx_mapped))
+  run_lengths <- as.numeric(table(factor(run_idx_mapped, levels = unique_runs)))
                                         spectral_sines,
                                         events = NULL) {
   unique_runs <- sort(unique(run_idx))
@@ -132,7 +164,9 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   list(unique_runs   = unique_runs,
        run_lengths   = run_lengths,
        total_tp      = total_tp,
-       run_map       = run_map)
+       run_idx_mapped = run_idx_mapped,
+       run_mapping   = run_mapping)
+
 }
 
 #' @keywords internal
@@ -149,6 +183,20 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   }
   if (!all(c("condition", "hrf_estimate") %in% names(estimated_hrfs))) {
     stop("estimated_hrfs tibble must contain 'condition' and 'hrf_estimate' columns.")
+  }
+
+  if (!is.null(events) && nrow(events) > 0) {
+    if (!("blockids" %in% names(events))) {
+      stop("events data frame must contain a 'blockids' column.")
+    }
+    n_runs <- length(sf$blocklens)
+    if (any(is.na(events$blockids) | !is.finite(events$blockids) |
+            events$blockids != floor(events$blockids))) {
+      stop("events$blockids must be finite integers.")
+    }
+    if (any(!(events$blockids %in% seq_len(n_runs)))) {
+      stop("events$blockids values outside range of run indices.")
+    }
   }
 
   task_designs_list <- list()
@@ -265,6 +313,9 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                              poly_degree,
                                              verbose = TRUE) {
   if (verbose) message(sprintf("  Generating baseline regressors (poly_degree: %s)...", ifelse(is.null(poly_degree), "NULL", poly_degree))) # Kept one high-level
+  if (any(is.na(run_idx) | !is.finite(run_idx) | run_idx != floor(run_idx))) {
+    stop("run_idx for baseline must be finite integer values.")
+  }
   unique_runs <- sort(unique(run_idx))
   total_tp    <- length(run_idx)
   baseline    <- list()
