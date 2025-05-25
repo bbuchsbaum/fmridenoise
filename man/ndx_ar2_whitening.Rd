@@ -9,7 +9,10 @@ ndx_ar2_whitening(
   X_design_full,
   Y_residuals_for_AR_fit,
   order = 2L,
-  global_ar_on_design = TRUE
+  global_ar_on_design = TRUE,
+  verbose = TRUE,
+  weights = NULL,
+  global_ar_stat = c("mean", "median", "trimmed_mean")
 )
 }
 \arguments{
@@ -27,6 +30,10 @@ that accounts for task effects and other known structured noise components.}
 \item{global_ar_on_design}{Logical, if TRUE (default), a global AR model (averaged from successful
 voxel-wise fits) is used to whiten `X_design_full`. If FALSE, `X_design_full` is not whitened,
 and users should handle its whitening if necessary for downstream voxel-wise modeling.}
+\item{verbose}{Logical, if TRUE progress messages are printed.}
+\item{weights}{Optional numeric matrix of weights used for weighted AR coefficient estimation.}
+\item{global_ar_stat}{Method used to summarize voxel-wise AR coefficients when computing the global filter.
+Options are "mean" (default), "median", or "trimmed_mean".}
 }
 \value{
 A list containing:
