@@ -4,6 +4,7 @@
 #' at different processing stages of ND-X. Uses htmlwidgets to create
 #' static HTML that works without requiring a Shiny server.
 #'
+#' @param workflow_output List returned by NDX_Process_Subject with Annihilation Mode enabled
 #' @param workflow_output List returned by `NDX_Process_Subject` with
 #'   Annihilation Mode enabled. It must contain at minimum the elements
 #'   `diagnostics_per_pass` (each with a `DES` value),
@@ -18,10 +19,9 @@
 #' @importFrom htmltools tags tagList div HTML
 #' @importFrom plotly plot_ly add_trace layout
 #' @export
-ndx_generate_progressive_enhancement <- function(workflow_output, 
-                                                gdlite_only_results = NULL,
+ndx_generate_progressive_enhancement <- function(workflow_output,
                                                 output_dir = "./diagnostics",
-                                                width = "100%", 
+                                                width = "100%",
                                                 height = 800) {
   
   # Check if Annihilation Mode was used
