@@ -175,9 +175,17 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
           X_whitened <- X_design_full
           AR_coeffs_global <- NULL
       } else {
-          if (verbose) message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", ")))
-          X_whitened <- .apply_ar_filter_to_matrix_cols(X_design_full, AR_coeffs_global, order)
-          if (verbose) message("X_design_full whitening complete.")
+          # Stability check on averaged coefficients
+          roots_global <- tryCatch(polyroot(c(1, -AR_coeffs_global)), error = function(e) NULL)
+          if(is.null(roots_global) || any(is.na(roots_global)) || any(Mod(roots_global) <= 1.00001)) {
+              warning("Averaged AR coefficients for design matrix are unstable. Design matrix will not be whitened.")
+              X_whitened <- X_design_full
+              AR_coeffs_global <- NULL
+          } else {
+              if (verbose) message(sprintf("Applying global AR filter (coeffs: %s) to X_design_full...", paste(round(AR_coeffs_global,3), collapse=", ")))
+              X_whitened <- .apply_ar_filter_to_matrix_cols(X_design_full, AR_coeffs_global, order)
+              if (verbose) message("X_design_full whitening complete.")
+          }
       }
     } else {
       warning("No valid voxel-wise AR coefficients available to compute global AR model for design matrix. Design matrix will not be whitened.")
