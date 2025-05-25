@@ -37,8 +37,10 @@ If NULL, all timepoints are used.}
 \item{lambda_grid}{Numeric vector of candidate lambda values for GCV.}
 }
 \value{
-A matrix of estimated beta coefficients (n_regressors x voxels/responses).
-  Returns NULL if inputs are invalid or the problem cannot be solved.
+A list with components 
+\code{betas} (matrix of estimated coefficients) and 
+\code{chol_RtR} (Cholesky factor of the penalized normal equations; may be \code{NULL}).
+Returns \code{NULL} if inputs are invalid or the problem cannot be solved.
 }
 \description{
 Solves for beta coefficients in a ridge regression model: Y = X beta + E,

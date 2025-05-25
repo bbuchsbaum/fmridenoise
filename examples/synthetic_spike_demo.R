@@ -124,3 +124,12 @@ cat("Injected spikes:", paste(spike_data$expected_spikes_global, collapse = ",")
 stopifnot(all(spike_data$expected_spikes_global %in% which(res_with_mask$spike_TR_mask)))
 stopifnot(all(which(initial_mask) %in% which(res_with_mask$spike_TR_mask)))
 
+# Demonstrate ndx_solve_anisotropic_ridge returning the Cholesky factor
+demo_X <- cbind(1, rnorm(spike_data$total_T))
+ridge_res <- ndx_solve_anisotropic_ridge(
+  spike_data$Y_residuals_cat,
+  demo_X,
+  K_penalty_diag = rep(0.1, ncol(demo_X))
+)
+cat("chol_RtR dimensions:", paste(dim(ridge_res$chol_RtR), collapse = "x"), "\n")
+

@@ -712,7 +712,7 @@ NDX_Process_Subject <- function(Y_fmri,
     lambda_results <- .ndx_tune_lambda_parameters(current_pass_results, proj_mats, opts_ridge, res_var_est)
     
     # Solve anisotropic ridge
-    ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
+    ridge_res <- ndx_solve_anisotropic_ridge(
       Y_whitened = current_pass_results$Y_whitened,
       X_whitened = current_pass_results$X_whitened,
       projection_mats = proj_mats,
@@ -722,7 +722,8 @@ NDX_Process_Subject <- function(Y_fmri,
       gcv_lambda = FALSE,
       res_var_scale = res_var_est
     )
-    
+    ridge_betas_whitened <- ridge_res$betas
+
     return(list(
       ridge_betas_whitened = ridge_betas_whitened,
       lambda_parallel_noise = lambda_results$lambda_parallel_tuned,
@@ -819,16 +820,16 @@ NDX_Process_Subject <- function(Y_fmri,
   K_penalty_diag <- rep(opts_ridge$lambda_ridge %||% 1.0, n_regressors)
   lambda_value <- opts_ridge$lambda_ridge %||% 1.0
   
-  ridge_betas_whitened <- ndx_solve_anisotropic_ridge(
+  ridge_res <- ndx_solve_anisotropic_ridge(
     Y_whitened = current_pass_results$Y_whitened,
     X_whitened = current_pass_results$X_whitened,
     K_penalty_diag = K_penalty_diag,
     na_mask = current_pass_results$na_mask_whitening,
     weights = precision_weights_for_pass
   )
-  
+
   list(
-    ridge_betas_whitened = ridge_betas_whitened,
+    ridge_betas_whitened = ridge_res$betas,
     lambda_parallel_noise = lambda_value,
     lambda_perp_signal = lambda_value
   )

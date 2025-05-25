@@ -13,7 +13,7 @@ test_that("ndx_solve_anisotropic_ridge computes correct betas for a simple case"
   test_data <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b, noise_sd = 0.1)
   K_diag <- rep(lambda_val, ncol(test_data$X))
   
-  betas_ridge <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag)
+  betas_ridge <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag)$betas
   dimnames(betas_ridge) <- NULL # Strip dimnames for comparison
 
   XtX <- crossprod(test_data$X)
@@ -39,7 +39,7 @@ test_that("ndx_solve_anisotropic_ridge works with full penalty matrix", {
 
   betas <- ndx_solve_anisotropic_ridge(td$Y, td$X,
                                        K_penalty_mat = K_mat,
-                                       use_penalty_matrix = TRUE)
+                                       use_penalty_matrix = TRUE)$betas
 
   expected <- solve(crossprod(td$X) + K_mat) %*% crossprod(td$X, td$Y)
   dimnames(betas) <- NULL
@@ -57,7 +57,7 @@ test_that("ndx_solve_anisotropic_ridge handles K_penalty_diag = 0 (OLS-like)", {
   test_data <- .create_ridge_test_data(n_tp, n_reg, n_vox, true_b_mat, noise_sd = 0.2)
   K_diag_zero <- rep(0, ncol(test_data$X))
   
-  betas_ols_like <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_zero)
+  betas_ols_like <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_zero)$betas
   dimnames(betas_ols_like) <- NULL # Strip dimnames
   
   ols_betas_lm_fit <- stats::lm.fit(test_data$X, test_data$Y)$coefficients
@@ -77,8 +77,8 @@ test_that("ndx_solve_anisotropic_ridge shrinks betas with high K_penalty_diag va
   K_diag_low <- rep(0.1, ncol(test_data$X))
   K_diag_high <- rep(10000, ncol(test_data$X))
 
-  betas_low_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_low)
-  betas_high_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_high)
+  betas_low_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_low)$betas
+  betas_high_lambda <- ndx_solve_anisotropic_ridge(test_data$Y, test_data$X, K_penalty_diag = K_diag_high)$betas
   
   expect_lt(sum(abs(betas_high_lambda)), sum(abs(betas_low_lambda)) * 0.1)
   expect_true(all(abs(betas_high_lambda) < 0.1))
@@ -98,7 +98,7 @@ test_that("ndx_solve_anisotropic_ridge handles na_mask correctly", {
   na_mask_provided <- test_data_na$na_mask
   K_diag <- rep(1.0, ncol(X_for_na))
   
-  betas_with_mask <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = na_mask_provided)
+  betas_with_mask <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = na_mask_provided)$betas
   
   Y_clean_manual <- Y_with_na[!na_mask_provided, , drop = FALSE]
   X_clean_manual <- X_for_na[!na_mask_provided, , drop = FALSE]
@@ -108,7 +108,7 @@ test_that("ndx_solve_anisotropic_ridge handles na_mask correctly", {
   
   expect_equal(betas_with_mask, expected_betas_clean_manual, tolerance = 1e-6)
 
-  betas_raw_na <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = NULL)
+  betas_raw_na <- ndx_solve_anisotropic_ridge(Y_with_na, X_for_na, K_penalty_diag = K_diag, na_mask = NULL)$betas
   expect_true(any(is.na(betas_raw_na))) 
 
   all_na_mask <- rep(TRUE, nrow(Y_with_na))
@@ -243,7 +243,7 @@ test_that("ndx_solve_anisotropic_ridge works with projection matrices", {
   lambda_vals <- list(lambda_parallel = 0.5, lambda_perp_signal = 0.05)
   betas <- ndx_solve_anisotropic_ridge(td$Y, td$X, K_penalty_diag = NULL,
                                        projection_mats = proj,
-                                       lambda_values = lambda_vals)
+                                       lambda_values = lambda_vals)$betas
   expect_equal(dim(betas), c(2,1))
 })
 
@@ -259,7 +259,7 @@ test_that("full penalty from projection matrices matches manual", {
   betas_pm <- ndx_solve_anisotropic_ridge(td$Y, td$X,
                                           projection_mats = proj,
                                           lambda_values = lambda_vals,
-                                          use_penalty_matrix = TRUE)
+                                          use_penalty_matrix = TRUE)$betas
 
   expected <- solve(crossprod(td$X) + K_manual) %*% crossprod(td$X, td$Y)
   dimnames(betas_pm) <- NULL
@@ -271,7 +271,7 @@ test_that("ndx_solve_anisotropic_ridge handles weights", {
   data <- .create_ridge_test_data(40, 2, 1, c(1, -1), noise_sd = 0.1)
   K_diag <- rep(0.1, 2)
   w <- matrix(1, nrow = nrow(data$Y), ncol = 1)
-  betas_unw <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag)
-  betas_w <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag, weights = w)
+  betas_unw <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag)$betas
+  betas_w <- ndx_solve_anisotropic_ridge(data$Y, data$X, K_penalty_diag = K_diag, weights = w)$betas
   expect_equal(betas_unw, betas_w)
 })
