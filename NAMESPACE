@@ -2,6 +2,9 @@
 
 export(Auto_Adapt_RPCA_Rank)
 export(NDX_Process_Subject)
+export(ndx_validate_process_subject_inputs)
+export(ndx_prepare_workflow_options)
+export(ndx_run_annihilation_setup)
 export(ndx_default_user_options)
 export(merge_lists)
 export(`%||%`)
