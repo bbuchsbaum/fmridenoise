@@ -24,9 +24,10 @@
 #'
 #' @return A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
 #'   rows. Each pair of columns represents sine and cosine regressors for an
-#'   identified peak frequency. The attribute "freq" contains the frequencies
-#'   (in Hz) of the selected peaks. Returns NULL if no peaks are found or if
-#'   input is unsuitable.
+#'   identified peak frequency. The attributes `freq_hz` and `freq_rad_s`
+#'   record the peak frequencies. If no usable peaks are identified or spectral
+#'   estimation fails, a 0-column matrix produced by `.empty_spec_matrix()` is
+#'   returned. Invalid inputs still yield `NULL`.
 #'
 #' @examples
 #' \dontrun{
@@ -115,7 +116,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (is.null(mt_res) || is.null(mt_res$spec) || is.null(mt_res$freq) || length(mt_res$spec) == 0) {
     warning("Spectrum estimation via spec.mtm did not yield valid spec or freq.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   nyquist_freq  <- 1 / (2 * TR)
@@ -127,7 +128,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (sum(keep_indices) == 0) {
     warning("No frequencies to search for peaks after applying guard factor and excluding DC.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   spec_to_search <- mt_res$spec[keep_indices]
@@ -145,7 +146,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (is.null(peak_info_all) || nrow(peak_info_all) == 0) {
     if (verbose) message("No initial peaks found in the spectrum by pracma::findpeaks.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
   
   # Peak prominence filter
@@ -166,7 +167,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (is.null(peak_info) || nrow(peak_info) == 0) {
     if (verbose) message(sprintf("No significant peaks found after prominence filter (threshold: %.4g).", prom_thresh))
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
   
   # Select top n_sine_candidates peaks based on their amplitude (peak_info already sorted by findpeaks with sortstr=TRUE)

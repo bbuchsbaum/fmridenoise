@@ -64,14 +64,9 @@ test_that("ndx_spectral_sines handles no clear peaks", {
 
   spectral_regressors <- ndx_spectral_sines(mean_resid_data, TR = TR_val, n_sine_candidates = 3)
 
-  # Depending on noise, it might find some peaks or none. 
-  # If it finds peaks, check consistency. If NULL, that's also acceptable.
-  if (is.null(spectral_regressors)) {
-    expect_null(spectral_regressors) # Explicitly state that NULL is okay
-  } else {
-    expect_true(is.matrix(spectral_regressors))
-    expect_true(ncol(spectral_regressors) <= 2 * 3) # At most 2*n_sine_candidates
-  }
+  expect_true(is.matrix(spectral_regressors))
+  expect_equal(nrow(spectral_regressors), n_timepoints)
+  expect_true(ncol(spectral_regressors) <= 2 * 3) # At most 2*n_sine_candidates
 })
 
 test_that("ndx_spectral_sines handles reasonably short but valid time series", {
@@ -85,11 +80,7 @@ test_that("ndx_spectral_sines handles reasonably short but valid time series", {
     spectral_regressors_ok <- ndx_spectral_sines(mean_resid_data_ok, TR = TR_val, k_tapers = 2, nw=1.5, n_sine_candidates = 1)
   })
   # We don't strictly require it to find peaks here, just not to error/warn inappropriately on length
-  if (is.null(spectral_regressors_ok)) {
-    expect_null(spectral_regressors_ok)
-  } else {
-    expect_true(is.matrix(spectral_regressors_ok))
-  }
+  expect_true(is.matrix(spectral_regressors_ok))
 })
 
 test_that("ndx_spectral_sines handles invalid inputs", {
@@ -122,16 +113,17 @@ test_that("nyquist_guard_factor works as expected", {
   signal_near_nyquist_orig <- sin(2 * pi * freq_near_nyquist_orig * time_vector_sec)
   mean_resid_data_orig_for_guard <- signal_near_nyquist_orig + rnorm(n_timepoints, sd = 0.1) # Original noise
 
-  spectral_regressors_guarded <- ndx_spectral_sines(mean_resid_data_orig_for_guard, TR = TR_val, 
-                                                  n_sine_candidates = 1, 
+  spectral_regressors_guarded <- ndx_spectral_sines(mean_resid_data_orig_for_guard, TR = TR_val,
+                                                  n_sine_candidates = 1,
                                                   nyquist_guard_factor = 0.9, # Default guard
                                                   verbose = FALSE) # Less verbose for this part
-  if (!is.null(spectral_regressors_guarded)) {
+  expect_true(is.matrix(spectral_regressors_guarded))
+  if (ncol(spectral_regressors_guarded) > 0) {
     identified_freqs_guarded <- attr(spectral_regressors_guarded, "freq_hz")
-    expect_true(all(identified_freqs_guarded < freq_near_nyquist_orig), 
+    expect_true(all(identified_freqs_guarded < freq_near_nyquist_orig),
                 "Identified frequencies should be less than the near-Nyquist signal if guarded.")
   } else {
-    expect_null(spectral_regressors_guarded, "Expected no peaks or NULL due to guard factor excluding the main peak.")
+    expect_equal(ncol(spectral_regressors_guarded), 0)
   }
 
   # With guard factor = 1.0, it should be found IF signal is strong enough.
@@ -166,7 +158,7 @@ test_that("ndx_spectral_sines handles short time series that cause spec.mtm to f
     res <- ndx_spectral_sines(short_ts, TR = 1, n_sine_candidates = 1, k_tapers = 5, nw = 3),
     "Spectrum estimation via spec.mtm did not yield valid spec or freq."
   )
-  expect_null(res)
+  expect_true(is.matrix(res) && ncol(res) == 0 && nrow(res) == length(short_ts))
 })
 
 test_that("ndx_spectral_sines warns if k_tapers becomes < 1 after adjustment", {
