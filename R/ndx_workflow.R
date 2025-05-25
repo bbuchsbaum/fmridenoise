@@ -1,9 +1,11 @@
 #' Process a Single Subject through the Full ND-X Iterative Denoising Workflow
 #'
-#' This function orchestrates the core modules of the ND-X pipeline. 
-#' It iteratively performs initial residual generation, FIR HRF estimation, 
-#' nuisance component identification (RPCA and Spectral), AR(2) pre-whitening, 
-#' and ridge regression until convergence or max passes.
+#' This function orchestrates the core modules of the ND-X pipeline.
+#' It iteratively performs initial residual generation, FIR HRF estimation,
+#' nuisance component identification (RPCA and Spectral), AR(2) pre-whitening,
+#' and ridge regression until convergence or max passes. Input types are
+#' validated and the function will stop with informative error messages if they
+#' do not meet expectations.
 #'
 #' @param Y_fmri A numeric matrix of fMRI data (total_timepoints x voxels), concatenated across runs if applicable.
 #' @param events A data frame describing experimental events. Must contain columns compatible
@@ -56,7 +58,36 @@ NDX_Process_Subject <- function(Y_fmri,
 
   if (verbose) message("Starting ND-X Processing for Subject...")
 
-  # --- 0. Validate inputs and merge default user_options --- 
+  # --- 0. Validate inputs and merge default user_options ---
+  # Validate primary inputs similar to ndx_initial_glm
+  if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) {
+    stop("Y_fmri must be a numeric matrix (timepoints x voxels).")
+  }
+  n_timepoints <- nrow(Y_fmri)
+  if (n_timepoints == 0) stop("Y_fmri has zero timepoints.")
+  if (ncol(Y_fmri) == 0) stop("Y_fmri has zero voxels.")
+
+  if (!is.matrix(motion_params) || !is.numeric(motion_params)) {
+    stop("motion_params must be a numeric matrix.")
+  }
+  if (nrow(motion_params) != n_timepoints) {
+    stop("Number of rows in motion_params must match Y_fmri.")
+  }
+
+  if (!is.data.frame(events)) stop("events must be a data frame.")
+  required_event_cols <- c("onsets", "durations", "condition", "blockids")
+  if (!all(required_event_cols %in% names(events))) {
+    stop(paste("events data frame must contain columns:",
+               paste(required_event_cols, collapse = ", ")))
+  }
+
+  if (!is.numeric(run_idx) || length(run_idx) != n_timepoints) {
+    stop("run_idx must be a numeric vector with length matching nrow(Y_fmri).")
+  }
+  if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
+    stop("TR must be a single positive number.")
+  }
+
   # Default general workflow options
   max_passes <- user_options$max_passes %||% 3L
   min_des_gain_convergence <- user_options$min_des_gain_convergence %||% 0.005
@@ -135,6 +166,9 @@ NDX_Process_Subject <- function(Y_fmri,
   U_GD_Lite_fixed_PCs <- NULL
   gdlite_initial_results <- NULL # To store full gdlite output if needed for diagnostics
 
+  # Store orthogonalized nuisance components from the previous pass
+  prev_U_NDX_Nuisance <- NULL
+
   # --- Call ndx_run_gdlite if Annihilation Mode is enabled (once before the loop) ---
   if (opts_annihilation$annihilation_enable_mode) {
     if (verbose_workflow) message("Annihilation Mode enabled: Running GLMdenoise-Lite procedure upfront...")
@@ -177,8 +211,13 @@ NDX_Process_Subject <- function(Y_fmri,
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
     if (verbose) message(sprintf("\n--- Starting ND-X Pass %d/%d ---", pass_num, max_passes))
-    
+
     current_pass_results <- list()
+
+    # Start with nuisance components from the previous pass if available
+    U_NDX_Nuisance_Combined_list <- prev_U_NDX_Nuisance
+    if (is.null(U_NDX_Nuisance_Combined_list))
+      U_NDX_Nuisance_Combined_list <- list()
 
     # --- 1. Initial GLM (Pass 0 equivalent, or using residuals from previous ND-X pass) ---
     if (pass_num == 1) {
@@ -598,6 +637,7 @@ NDX_Process_Subject <- function(Y_fmri,
     # --- 8. Calculate Diagnostics for this Pass (NDX-9 / NDX-18) ---
     if (verbose) message(sprintf("Pass %d: Calculating diagnostics...", pass_num))
     pass_diagnostics <- list()
+    annihilation_active_this_pass <- FALSE
 
     # Ljung-Box whiteness test on residuals
     whitened_resids <- NULL
@@ -659,8 +699,8 @@ NDX_Process_Subject <- function(Y_fmri,
         if (verbose_workflow) message(sprintf("    Added %d GLMdenoise-Lite PCs to nuisance set", 
                                            ncol(U_GD_Lite_fixed_PCs)))
         
-        # Update diagnostic to indicate annihilation was active this pass
-        diagnostics_per_pass[[pass_num]]$pass_options$annihilation_active_this_pass <- TRUE
+        # Mark that annihilation was active this pass
+        annihilation_active_this_pass <- TRUE
     }
     
     if (length(U_NDX_Nuisance_Combined_list) > 0 && !is.null(Y_residuals_current)) {
@@ -705,14 +745,17 @@ NDX_Process_Subject <- function(Y_fmri,
     pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
 
     # Store options used for this pass if they can change adaptively or for reference
-    diagnostics_per_pass[[pass_num]]$pass_options <- list(
+    pass_diagnostics$pass_options <- list(
       current_rpca_k_target = k_rpca_global,
       current_rpca_lambda = current_opts_rpca$rpca_lambda_fixed %||% current_opts_rpca$rpca_lambda_auto,
       # TODO: store spectral selection details, HRF clustering details etc.
-      annihilation_active_this_pass = FALSE # Default, update if active
+      annihilation_active_this_pass = annihilation_active_this_pass
     )
 
     diagnostics_per_pass[[pass_num]] <- pass_diagnostics
+
+    # Preserve nuisance components for the next pass
+    prev_U_NDX_Nuisance <- current_pass_results$U_NDX_Nuisance_Combined_list
     
     # --- 9. Convergence Check ---
     if (pass_num > 1) {
