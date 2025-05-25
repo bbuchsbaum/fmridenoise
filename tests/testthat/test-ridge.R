@@ -195,7 +195,8 @@ test_that("ndx_compute_projection_matrices constructs valid projectors", {
   U_noise <- matrix(rnorm(20), nrow = 4)
   proj <- ndx_compute_projection_matrices(U_Noise = U_noise, n_regressors = 4)
   expect_true(all(dim(proj$P_Noise) == c(4,4)))
-  expect_true(all(diag(proj$P_Signal + proj$P_Noise) <= 1.0001))
+  expect_equal(proj$P_Noise + proj$P_Signal, diag(4), tolerance = 1e-6)
+  expect_true(max(abs(proj$P_Noise %*% proj$P_Signal)) < 1e-6)
 })
 
 test_that("ndx_update_lambda_aggressiveness adjusts lambda", {
