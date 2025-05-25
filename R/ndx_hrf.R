@@ -507,10 +507,11 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
   X_fir_cond_all_trs <- tryCatch({
        get_fir_design_matrix_for_condition(
           condition_name = condition_name,
-          events_df = events_for_condition, 
-          sampling_frame = overall_sampling_frame, 
-          fir_taps = effective_hrf_fir_taps, 
-          TR = TR 
+          events_df = events_for_condition,
+          sampling_frame = overall_sampling_frame,
+          fir_taps = effective_hrf_fir_taps,
+          TR = TR,
+          verbose = (user_options$verbose_hrf %||% FALSE)
       )
   }, error = function(e) {
       warning(paste("Error generating FIR design for condition", condition_name, ":", e$message))
@@ -621,21 +622,24 @@ estimate_hrf_for_condition <- function(condition_name, events_for_condition,
 #' @keywords internal
 # NO @export for get_fir_design_matrix_for_condition
 get_fir_design_matrix_for_condition <- function(condition_name, events_df,
-                                                sampling_frame, fir_taps, TR) {
+                                                sampling_frame, fir_taps, TR,
+                                                verbose = FALSE) {
   
   total_timepoints <- sum(sampling_frame$blocklens)
   
   # --- BEGIN DEBUG MESSAGES ---
-  message(sprintf("[get_fir_design_matrix_for_condition] Cond: %s", condition_name))
-  message(sprintf("  Input fir_taps: %s (class: %s), Input TR: %s (class: %s)", 
-                  as.character(fir_taps), class(fir_taps), as.character(TR), class(TR)))
-  message(sprintf("  sampling_frame$total_samples (total_timepoints): %s (class: %s)", 
-                  as.character(total_timepoints), class(total_timepoints)))
-  if (!is.numeric(total_timepoints) || length(total_timepoints) != 1 || !is.finite(total_timepoints) || total_timepoints < 0) {
-      message("  WARNING: total_timepoints is not a single positive finite number!")
-  }
-  if (!is.numeric(fir_taps) || length(fir_taps) != 1 || !is.finite(fir_taps) || fir_taps < 0) {
-      message("  WARNING: fir_taps is not a single positive finite number!")
+  if (verbose) {
+    message(sprintf("[get_fir_design_matrix_for_condition] Cond: %s", condition_name))
+    message(sprintf("  Input fir_taps: %s (class: %s), Input TR: %s (class: %s)",
+                    as.character(fir_taps), class(fir_taps), as.character(TR), class(TR)))
+    message(sprintf("  sampling_frame$total_samples (total_timepoints): %s (class: %s)",
+                    as.character(total_timepoints), class(total_timepoints)))
+    if (!is.numeric(total_timepoints) || length(total_timepoints) != 1 || !is.finite(total_timepoints) || total_timepoints < 0) {
+        message("  WARNING: total_timepoints is not a single positive finite number!")
+    }
+    if (!is.numeric(fir_taps) || length(fir_taps) != 1 || !is.finite(fir_taps) || fir_taps < 0) {
+        message("  WARNING: fir_taps is not a single positive finite number!")
+    }
   }
   # --- END DEBUG MESSAGES ---
 
