@@ -91,6 +91,43 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
   best_lambda
 }
 
+#' Tune Ridge Penalty via Leave-One-Out Cross Validation
+#'
+#' Computes the optimal isotropic ridge penalty using the efficient
+#' leave-one-out (LOO) formula. The cross-validation error is
+#' calculated for each candidate value in `lambda_grid` and the
+#' lambda yielding the smallest mean squared LOO residual is returned.
+#'
+#' @param Y Numeric matrix of responses (timepoints x variables).
+#' @param X Numeric design matrix (timepoints x regressors).
+#' @param lambda_grid Numeric vector of candidate ridge penalties.
+#' @return The lambda value from `lambda_grid` with minimal LOO error.
+#' @export
+ndx_loocv_tune_lambda_ridge <- function(Y, X, lambda_grid = 10^seq(-2, 2, length.out = 5)) {
+  if (!is.matrix(Y) || !is.numeric(Y)) stop("Y must be a numeric matrix.")
+  if (!is.matrix(X) || !is.numeric(X)) stop("X must be a numeric matrix.")
+  if (nrow(Y) != nrow(X)) stop("Y and X must have the same number of rows.")
+  if (!is.numeric(lambda_grid) || length(lambda_grid) == 0) stop("lambda_grid must be numeric.")
+
+  m <- ncol(X)
+  XtX <- crossprod(X)
+  XtY <- crossprod(X, Y)
+
+  cv_errors <- numeric(length(lambda_grid))
+
+  for (i in seq_along(lambda_grid)) {
+    lam <- lambda_grid[i]
+    cho <- chol(XtX + diag(lam, m))
+    beta_all <- backsolve(cho, backsolve(cho, XtY, transpose = TRUE))
+    inv_cho <- chol2inv(cho)
+    hat_diag <- rowSums((X %*% inv_cho) * X)
+    loo_res <- (Y - X %*% beta_all) / (1 - hat_diag)
+    cv_errors[i] <- mean(loo_res^2)
+  }
+
+  lambda_grid[which.min(cv_errors)]
+}
+
 #' Update Lambda Aggressiveness Based on Rho
 #'
 #' Simple heuristic to adjust lambda_parallel depending on how much residual
