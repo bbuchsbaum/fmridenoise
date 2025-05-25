@@ -36,6 +36,14 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     zero_var_epsilon = 1e-8) {
 
   # 1. Basic validation ----------------------------------------------------
+  info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines, events)
+  sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
+
+  # Map events$blockids to sequential run numbers if needed
+  events_mapped <- events
+  if (!is.null(events_mapped)) {
+    events_mapped$blockids <- info$run_map[as.character(events_mapped$blockids)]
+  }
   if (!(is.numeric(TR) && length(TR) == 1 && TR > 0)) {
     stop("TR must be a single positive number.")
   }
@@ -53,7 +61,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   events <- events[order(factor(events$blockids, levels = info$unique_runs)), , drop = FALSE]
 
   # 2. Task regressors -----------------------------------------------------
-  task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events, sf, TR, verbose)
+  task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events_mapped, sf, TR, verbose)
 
   # 3. Nuisance regressors -------------------------------------------------
   nuisance_list_components <- .ndx_generate_nuisance_regressors(motion_params, rpca_components, spectral_sines, verbose)
@@ -84,7 +92,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 .ndx_validate_design_inputs <- function(run_idx,
                                         motion_params,
                                         rpca_components,
-                                        spectral_sines) {
+                                        spectral_sines,
+                                        events = NULL) {
   unique_runs <- sort(unique(run_idx))
   run_lengths <- as.numeric(table(factor(run_idx, levels = unique_runs)))
 
@@ -107,9 +116,23 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   check_rows(rpca_components, "rpca_components")
   check_rows(spectral_sines,  "spectral_sines")
 
+  if (!is.null(events)) {
+    if (!is.data.frame(events) || !("blockids" %in% names(events))) {
+      stop("events must be a data.frame containing a 'blockids' column for validation.")
+    }
+    invalid_blocks <- setdiff(unique(events$blockids), unique_runs)
+    if (length(invalid_blocks) > 0) {
+      stop(sprintf("events$blockids contains values not present in run_idx: %s",
+                   paste(invalid_blocks, collapse = ", ")))
+    }
+  }
+
+  run_map <- setNames(seq_along(unique_runs), unique_runs)
+
   list(unique_runs   = unique_runs,
        run_lengths   = run_lengths,
-       total_tp      = total_tp)
+       total_tp      = total_tp,
+       run_map       = run_map)
 }
 
 #' @keywords internal
