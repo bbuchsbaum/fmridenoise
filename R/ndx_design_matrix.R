@@ -11,7 +11,7 @@
 #' @param rpca_components Optional matrix of RPCA regressors.
 #' @param spectral_sines Optional matrix of spectral sine/cosine regressors.
 #' @param run_idx Integer vector indicating run membership for each time-point.
-#' @param TR Repetition time, in seconds.
+#' @param TR Positive repetition time, in seconds.
 #' @param poly_degree Degree of Legendre polynomial baseline (per run).
 #' @param verbose Logical flag for verbose console output.
 #' @param drop_zero_variance Logical flag to drop near-zero variance regressors.
@@ -32,6 +32,9 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     drop_zero_variance = FALSE) {
 
   # 1. Basic validation ----------------------------------------------------
+  if (!(is.numeric(TR) && length(TR) == 1 && TR > 0)) {
+    stop("TR must be a single positive number.")
+  }
   info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
   sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
 

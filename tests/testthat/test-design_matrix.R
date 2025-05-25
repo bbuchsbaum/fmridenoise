@@ -242,9 +242,18 @@ test_that("ndx_build_design_matrix generates correct polynomial degrees and inte
 
 test_that("ndx_build_design_matrix errors on row mismatches for inputs", {
   bad_motion <- motion_params_dm[1:(total_timepoints_dm-1), , drop=FALSE]
-  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=bad_motion, rpca_components=NULL, spectral_sines=NULL, 
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=bad_motion, rpca_components=NULL, spectral_sines=NULL,
                                       run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=0, verbose=FALSE),
                "Row mismatch: motion_params")
+})
+
+test_that("ndx_build_design_matrix errors on invalid TR", {
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=c(2, 3), poly_degree=0, verbose=FALSE),
+               "single positive number")
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=-1, poly_degree=0, verbose=FALSE),
+               "single positive number")
 })
 
 test_that("ndx_build_design_matrix returns NULL if no regressors are formed", {
