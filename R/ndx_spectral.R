@@ -22,12 +22,14 @@
 #'   criterion required to retain a candidate pair. Default 2.
 #' @param verbose Logical, whether to print verbose diagnostic messages.
 #'
-#' @return A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
-#'   rows. Each pair of columns represents sine and cosine regressors for an
-#'   identified peak frequency. The attributes `freq_hz` and `freq_rad_s`
-#'   record the peak frequencies. If no usable peaks are identified or spectral
-#'   estimation fails, a 0-column matrix produced by `.empty_spec_matrix()` is
-#'   returned. Invalid inputs still yield `NULL`.
+#' @return A matrix with `2 * n_selected_peaks` columns and
+#'   `length(mean_residual_for_spectrum)` rows. Each pair of columns
+#'   represents sine and cosine regressors for an identified peak
+#'   frequency. Attributes \code{"freq_hz"} and \code{"freq_rad_s"}
+#'   store the selected peak frequencies in Hz and radians/sec,
+#'   respectively. If no peaks survive selection, a zero-column matrix
+#'   with these attributes is returned. The function returns \code{NULL}
+#'   only when the input is invalid or when spectral estimation fails.
 #'
 #' @examples
 #' \dontrun{
@@ -46,7 +48,7 @@
 #'   if (!is.null(U_sines)) {
 #'     print(paste("Generated", ncol(U_sines) / 2, "sine/cosine pairs."))
 #'     print("Identified frequencies (Hz):")
-#'     print(attr(U_sines, "freq"))
+#'     print(attr(U_sines, "freq_hz"))
 #'     # plot(time_points, U_sines[,1], type='l', main="First Sine Regressor")
 #'   }
 #' }
