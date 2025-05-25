@@ -67,11 +67,11 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
   XtX <- crossprod(X_whitened)
   XtY <- crossprod(X_whitened, Y_whitened)
   base_diag <- diag(XtX)
-  XtX_pen <- XtX
   for (lam in lambda_grid) {
     K_diag <- lam * diag_noise + (lam * lambda_ratio) * diag(P_Signal)
-    diag(XtX_pen) <- base_diag + pmax(K_diag, .Machine$double.eps)
-    chol_decomp <- tryCatch(chol(XtX_pen), error = function(e) NULL)
+    lhs <- XtX
+    diag(lhs) <- base_diag + pmax(K_diag, .Machine$double.eps)
+    chol_decomp <- tryCatch(chol(lhs), error = function(e) NULL)
     if (is.null(chol_decomp)) next
     beta_hat <- chol2inv(chol_decomp) %*% XtY
     residuals <- Y_whitened - X_whitened %*% beta_hat
@@ -450,15 +450,15 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
       if (use_penalty_matrix) {
         K_mat_safe <- K_penalty_mat
         diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
-        XtX_penalized <- XtX + K_mat_safe
+        lhs <- XtX + K_mat_safe
       } else {
         safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
-        XtX_penalized <- XtX
-        diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+        lhs <- XtX
+        diag(lhs) <- diag(lhs) + safe_K_penalty_diag
       }
 
       b <- tryCatch({
-        chol_decomp <- chol(XtX_penalized)
+        chol_decomp <- chol(lhs)
         chol2inv(chol_decomp) %*% XtY
       }, error = function(e) NULL)
       if (!is.null(b)) betas[, v] <- b
@@ -482,16 +482,16 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
   if (use_penalty_matrix) {
     K_mat_safe <- K_penalty_mat
     diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
-    XtX_penalized <- XtX + K_mat_safe
+    lhs <- XtX + K_mat_safe
   } else {
     safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
-    XtX_penalized <- XtX
-    diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+    lhs <- XtX
+    diag(lhs) <- diag(lhs) + safe_K_penalty_diag
   }
 
   betas <- NULL
   tryCatch({
-    chol_decomp <- chol(XtX_penalized)
+    chol_decomp <- chol(lhs)
     betas <- chol2inv(chol_decomp) %*% XtY
   }, error = function(e) {
     warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
