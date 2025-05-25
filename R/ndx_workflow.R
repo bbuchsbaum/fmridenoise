@@ -597,6 +597,7 @@ NDX_Process_Subject <- function(Y_fmri,
     # --- 8. Calculate Diagnostics for this Pass (NDX-9 / NDX-18) ---
     if (verbose) message(sprintf("Pass %d: Calculating diagnostics...", pass_num))
     pass_diagnostics <- list()
+    annihilation_active_this_pass <- FALSE
 
     # Ljung-Box whiteness test on residuals
     whitened_resids <- NULL
@@ -658,8 +659,8 @@ NDX_Process_Subject <- function(Y_fmri,
         if (verbose_workflow) message(sprintf("    Added %d GLMdenoise-Lite PCs to nuisance set", 
                                            ncol(U_GD_Lite_fixed_PCs)))
         
-        # Update diagnostic to indicate annihilation was active this pass
-        diagnostics_per_pass[[pass_num]]$pass_options$annihilation_active_this_pass <- TRUE
+        # Mark that annihilation was active this pass
+        annihilation_active_this_pass <- TRUE
     }
     
     if (length(U_NDX_Nuisance_Combined_list) > 0 && !is.null(Y_residuals_current)) {
@@ -704,11 +705,11 @@ NDX_Process_Subject <- function(Y_fmri,
     pass_diagnostics$V_global_singular_values_from_rpca <- current_pass_results$V_global_singular_values_from_rpca # Add to pass diagnostics
 
     # Store options used for this pass if they can change adaptively or for reference
-    diagnostics_per_pass[[pass_num]]$pass_options <- list(
+    pass_diagnostics$pass_options <- list(
       current_rpca_k_target = k_rpca_global,
       current_rpca_lambda = current_opts_rpca$rpca_lambda_fixed %||% current_opts_rpca$rpca_lambda_auto,
       # TODO: store spectral selection details, HRF clustering details etc.
-      annihilation_active_this_pass = FALSE # Default, update if active
+      annihilation_active_this_pass = annihilation_active_this_pass
     )
 
     diagnostics_per_pass[[pass_num]] <- pass_diagnostics
