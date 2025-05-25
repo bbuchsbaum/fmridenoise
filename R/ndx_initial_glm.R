@@ -85,6 +85,18 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
     stop("TR must be a single positive number.")
   }
 
+  # Ensure events are aligned with run_idx
+  blocks_events <- sort(unique(events$blockids))
+  blocks_runs <- sort(unique(run_idx))
+  if (!identical(blocks_events, blocks_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(blocks_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
+
   # 1. Create Sampling Frame
   # table() on run_idx gives counts per run, which are the blocklens
   # Ensure runs are ordered if run_idx is not already e.g. 1,1,1,2,2,2

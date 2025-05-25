@@ -329,6 +329,17 @@ validate_hrf_inputs <- function(Y_fmri, pass0_residuals, events, run_idx, TR, sp
     stop("TR must be a single positive number.")
   }
 
+  blocks_events <- sort(unique(events$blockids))
+  blocks_runs <- sort(unique(run_idx))
+  if (!identical(blocks_events, blocks_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(blocks_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
+
   validated_spike_TR_mask <- spike_TR_mask
   if (is.null(validated_spike_TR_mask)) {
     validated_spike_TR_mask <- rep(FALSE, n_timepoints)

@@ -35,6 +35,16 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   info <- .ndx_validate_design_inputs(run_idx, motion_params, rpca_components, spectral_sines)
   sf   <- fmrireg::sampling_frame(blocklens = info$run_lengths, TR = TR)
 
+  blocks_events <- sort(unique(events$blockids))
+  if (!identical(blocks_events, info$unique_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(info$unique_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = info$unique_runs)), , drop = FALSE]
+
   # 2. Task regressors -----------------------------------------------------
   task_mat <- .ndx_generate_task_regressors(estimated_hrfs, events, sf, TR, verbose)
 
