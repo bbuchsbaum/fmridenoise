@@ -31,9 +31,9 @@ Imports:
     pracma,
     jsonlite,
     digest,
-    plotly,
-    htmltools,
     htmlwidgets,
+    htmltools,
+    plotly
     magrittr
 Suggests:
     testthat (>= 3.0.0),
