@@ -20,6 +20,7 @@ ndx_generate_html_report(workflow_output, pass0_residuals, TR,
 \value{Path to the generated HTML file (invisibly).}
 \description{
 Creates a minimal HTML report summarizing ND-X diagnostics: DES per pass,
+\eqn{\beta}-stability across runs, Ljung-Box whiteness of residuals,
 residual power spectral density comparison, an optional spike carpet plot,
 and key adaptive hyperparameter values.
 }

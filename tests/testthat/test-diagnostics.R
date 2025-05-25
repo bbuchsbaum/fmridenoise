@@ -38,6 +38,8 @@ test_that("HTML report is generated", {
     html_path <- ndx_generate_html_report(workflow_mock, pass0_res, TR_test, output_dir = tmpdir)
   })
   expect_true(file.exists(file.path(tmpdir, "ndx_diagnostic_report.html")))
+  expect_true(file.exists(file.path(tmpdir, "beta_stability_per_pass.png")))
+  expect_true(file.exists(file.path(tmpdir, "ljung_box_pvalues.png")))
 })
 
 test_that("JSON certificate is generated with expected fields", {
