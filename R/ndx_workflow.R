@@ -135,6 +135,9 @@ NDX_Process_Subject <- function(Y_fmri,
   U_GD_Lite_fixed_PCs <- NULL
   gdlite_initial_results <- NULL # To store full gdlite output if needed for diagnostics
 
+  # Store orthogonalized nuisance components from the previous pass
+  prev_U_NDX_Nuisance <- NULL
+
   # --- Call ndx_run_gdlite if Annihilation Mode is enabled (once before the loop) ---
   if (opts_annihilation$annihilation_enable_mode) {
     if (verbose_workflow) message("Annihilation Mode enabled: Running GLMdenoise-Lite procedure upfront...")
@@ -177,8 +180,13 @@ NDX_Process_Subject <- function(Y_fmri,
   # --- Iterative Refinement Loop (NDX-11) ---
   for (pass_num in 1:max_passes) {
     if (verbose) message(sprintf("\n--- Starting ND-X Pass %d/%d ---", pass_num, max_passes))
-    
+
     current_pass_results <- list()
+
+    # Start with nuisance components from the previous pass if available
+    U_NDX_Nuisance_Combined_list <- prev_U_NDX_Nuisance
+    if (is.null(U_NDX_Nuisance_Combined_list))
+      U_NDX_Nuisance_Combined_list <- list()
 
     # --- 1. Initial GLM (Pass 0 equivalent, or using residuals from previous ND-X pass) ---
     if (pass_num == 1) {
@@ -713,6 +721,9 @@ NDX_Process_Subject <- function(Y_fmri,
     )
 
     diagnostics_per_pass[[pass_num]] <- pass_diagnostics
+
+    # Preserve nuisance components for the next pass
+    prev_U_NDX_Nuisance <- current_pass_results$U_NDX_Nuisance_Combined_list
     
     # --- 9. Convergence Check ---
     if (pass_num > 1) {
