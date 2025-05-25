@@ -13,7 +13,9 @@ ndx_build_design_matrix(
   run_idx,
   TR,
   poly_degree = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  drop_zero_variance = FALSE,
+  zero_var_epsilon = 1e-8
 )
 }
 \arguments{
@@ -34,6 +36,10 @@ ndx_build_design_matrix(
 \item{poly_degree}{Degree of Legendre polynomial baseline (per run).}
 
 \item{verbose}{Logical flag for verbose console output.}
+
+\item{drop_zero_variance}{Logical flag to drop near-zero variance regressors.}
+
+\item{zero_var_epsilon}{Numeric tolerance for detecting near-zero variance regressors.}
 }
 \value{
 Numeric matrix with one column per regressor (or `NULL` on failure).

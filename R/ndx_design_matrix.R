@@ -15,6 +15,9 @@
 #' @param poly_degree Degree of Legendre polynomial baseline (per run).
 #' @param verbose Logical flag for verbose console output.
 #' @param drop_zero_variance Logical flag to drop near-zero variance regressors.
+#' @param zero_var_epsilon Numeric tolerance for detecting near-zero variance
+#'   regressors. Columns with variance below this value are considered
+#'   near-constant. Default is 1e-8.
 #'
 #' @return Numeric matrix with one column per regressor (or `NULL` on failure).
 #' @importFrom fmrireg sampling_frame event_model design_matrix baseline_model
@@ -29,7 +32,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
                                     TR,
                                     poly_degree = NULL,
                                     verbose = TRUE,
-                                    drop_zero_variance = FALSE) {
+                                    drop_zero_variance = FALSE,
+                                    zero_var_epsilon = 1e-8) {
 
   # 1. Basic validation ----------------------------------------------------
   if (!(is.numeric(TR) && length(TR) == 1 && TR > 0)) {
@@ -60,7 +64,8 @@ ndx_build_design_matrix <- function(estimated_hrfs,
   # 5. Combine -------------------------------------------------------------
   regressor_list <- c(list(task = task_mat), nuisance_list_components, list(baseline = baseline_mat))
   X_full <- .ndx_combine_regressors(regressor_list, info$total_tp,
-                                    verbose, drop_zero_variance)
+                                    verbose, drop_zero_variance,
+                                    zero_var_epsilon)
 
   if (verbose && !is.null(X_full)) {
     message(sprintf("Constructed X_full_design with %d timepoints and %d regressors.", 
@@ -297,10 +302,12 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 }
 
 #' @keywords internal
+#' @param zero_var_epsilon Numeric tolerance for detecting near-zero variance columns.
 .ndx_combine_regressors <- function(reg_list,
                                    total_tp,
                                    verbose = TRUE,
-                                   drop_zero_variance = FALSE) {
+                                   drop_zero_variance = FALSE,
+                                   zero_var_epsilon = 1e-8) {
   valid_components <- list()
   for (name in names(reg_list)) {
     comp <- reg_list[[name]]
@@ -342,7 +349,7 @@ ndx_build_design_matrix <- function(estimated_hrfs,
 
   if (!is.null(X_combined) && ncol(X_combined) > 0) {
     col_vars <- apply(X_combined, 2, stats::var, na.rm = TRUE)
-    potential_zero_var_cols <- colnames(X_combined)[col_vars < (.Machine$double.eps * 100)]
+    potential_zero_var_cols <- colnames(X_combined)[col_vars < zero_var_epsilon]
     intercept_patterns <- "^(poly0|intercept|run_intercept_)"
     zero_var_cols_to_warn <- potential_zero_var_cols[!grepl(intercept_patterns, potential_zero_var_cols, ignore.case = TRUE)]
     if (length(zero_var_cols_to_warn) > 0 && verbose) {
