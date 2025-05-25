@@ -330,3 +330,22 @@ test_that("drop_zero_variance option removes constant regressors", {
   )
   expect_false("rpca_comp_1" %in% colnames(X_drop))
 })
+
+test_that("near-constant regressors are removed when variance below epsilon", {
+  set.seed(123)
+  near_const_rpca <- matrix(1 + rnorm(total_timepoints_dm, sd = 1e-10), ncol = 1)
+  X_drop_near <- ndx_build_design_matrix(
+    estimated_hrfs = estimated_hrfs_dm,
+    events = events_dm,
+    motion_params = motion_params_dm,
+    rpca_components = near_const_rpca,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE,
+    drop_zero_variance = TRUE,
+    zero_var_epsilon = 1e-8
+  )
+  expect_false("rpca_comp_1" %in% colnames(X_drop_near))
+})
