@@ -22,10 +22,14 @@ ndx_compute_projection_matrices <- function(U_GD = NULL, U_Unique = NULL,
   P_Unique <- make_proj(U_Unique)
   P_Noise <- make_proj(U_Noise)
 
-  P_combined <- matrix(0, n_regressors, n_regressors)
-  if (!is.null(P_GD)) P_combined <- P_combined + P_GD
-  if (!is.null(P_Unique)) P_combined <- P_combined + P_Unique
-  if (!is.null(P_Noise)) P_combined <- P_combined + P_Noise
+  basis_list <- list(U_GD, U_Unique, U_Noise)
+  non_null <- Filter(function(x) !is.null(x) && ncol(x) > 0, basis_list)
+  if (length(non_null) > 0) {
+    Q_all <- qr.Q(qr(do.call(cbind, non_null)))
+    P_combined <- Q_all %*% t(Q_all)
+  } else {
+    P_combined <- matrix(0, n_regressors, n_regressors)
+  }
   P_Signal <- I_reg - P_combined
 
   list(P_GD = P_GD, P_Unique = P_Unique, P_Noise = P_Noise, P_Signal = P_Signal)
@@ -58,19 +62,25 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
   }
   best_lambda <- lambda_grid[1]
   best_gcv <- Inf
+  XtX <- crossprod(X_whitened)
+  XtY <- crossprod(X_whitened, Y_whitened)
+  base_diag <- diag(XtX)
+  XtX_pen <- XtX
   for (lam in lambda_grid) {
     K_diag <- lam * diag_noise + (lam * lambda_ratio) * diag(P_Signal)
-    XtX <- crossprod(X_whitened)
-    XtX_pen <- XtX
-    diag(XtX_pen) <- diag(XtX_pen) + pmax(K_diag, .Machine$double.eps)
+    diag(XtX_pen) <- base_diag + pmax(K_diag, .Machine$double.eps)
     chol_decomp <- tryCatch(chol(XtX_pen), error = function(e) NULL)
     if (is.null(chol_decomp)) next
-    beta_hat <- chol2inv(chol_decomp) %*% crossprod(X_whitened, Y_whitened)
+    beta_hat <- chol2inv(chol_decomp) %*% XtY
     residuals <- Y_whitened - X_whitened %*% beta_hat
     sse <- sum(residuals^2)
     S_mat <- X_whitened %*% chol2inv(chol_decomp) %*% t(X_whitened)
     edf <- sum(diag(S_mat))
-    gcv <- sse / (n - edf)^2
+    if ((n - edf) <= .Machine$double.eps) {
+      gcv <- Inf
+    } else {
+      gcv <- sse / (n - edf)^2
+    }
     if (is.finite(gcv) && gcv < best_gcv) {
       best_gcv <- gcv
       best_lambda <- lam
@@ -146,14 +156,22 @@ ndx_estimate_res_var_whitened <- function(Y_whitened, X_whitened, na_mask = NULL
 #' @param X_whitened A numeric matrix of whitened regressors (timepoints x n_regressors).
 #' @param K_penalty_diag A numeric vector containing the diagonal elements of the penalty matrix K.
 #'   Its length must be equal to `ncol(X_whitened)`.
-#' @param na_mask Optional. A logical vector where TRUE indicates timepoints to exclude.
-#'   If NULL, all timepoints are used.
+#' @param na_mask Optional. A logical vector where TRUE indicates timepoints to
+#'   exclude. If NULL, all timepoints are used.
 #' @param projection_mats Optional list of projection matrices produced by
 #'   `ndx_compute_projection_matrices`. If provided along with `lambda_values`,
-#'   `K_penalty_diag` is constructed automatically.
+#'   `K_penalty_diag` (or `K_penalty_mat` when `use_penalty_matrix = TRUE`) is
+#'   constructed automatically.
 #' @param lambda_values Optional list with elements `lambda_parallel`,
-#'   `lambda_perp_signal`, `lambda_gd`, and `lambda_unique` used when
-#'   `K_penalty_diag` is not given.
+#'   `lambda_perp_signal`, `lambda_gd`, and `lambda_unique` used when a penalty
+#'   matrix or diagonal is not given.
+#' @param K_penalty_mat Optional full penalty matrix to use instead of
+#'   `K_penalty_diag`. When supplied, it must be a square matrix with dimension
+#'   equal to `ncol(X_whitened)`.
+#' @param use_penalty_matrix Logical, when TRUE a full penalty matrix is used.
+#'   The matrix is either supplied via `K_penalty_mat` or constructed from
+#'   `projection_mats` and `lambda_values`. The default FALSE preserves the
+#'   historic diagonal-only behaviour.
 #' @param weights Optional numeric vector or matrix of weights to apply to each
 #'   timepoint. If a matrix, its dimensions must match `Y_whitened` and the
 #'   weighting is applied per voxel.
@@ -170,7 +188,9 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
                                         na_mask = NULL, projection_mats = NULL,
                                         lambda_values = NULL, weights = NULL,
                                         gcv_lambda = FALSE, res_var_scale = 1.0,
-                                        lambda_grid = 10^seq(-2, 2, length.out = 5)) {
+                                        lambda_grid = 10^seq(-2, 2, length.out = 5),
+                                        K_penalty_mat = NULL,
+                                        use_penalty_matrix = FALSE) {
 
   # --- Input Validation ---
   if (is.null(Y_whitened) || is.null(X_whitened)){
@@ -196,9 +216,17 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
         warning("weights matrix must match dimensions of Y_whitened")
         return(NULL)
       }
+      if (any(!is.finite(as.vector(weights))) || any(as.vector(weights) < 0)) {
+        warning("weights must contain non-negative finite numbers")
+        return(NULL)
+      }
     } else if (is.numeric(weights) && is.vector(weights)) {
       if (length(weights) != nrow(Y_whitened)) {
         warning("weights vector length must equal number of rows in Y_whitened")
+        return(NULL)
+      }
+      if (any(!is.finite(weights)) || any(weights < 0)) {
+        warning("weights must contain non-negative finite numbers")
         return(NULL)
       }
     } else {
@@ -206,23 +234,43 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       return(NULL)
     }
   }
-  if (!is.null(K_penalty_diag)) {
-    if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
-      warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
-      return(NULL)
-    }
-    if (any(K_penalty_diag < 0)) {
-      warning("All elements of K_penalty_diag must be non-negative.")
-      return(NULL)
+  if (use_penalty_matrix) {
+    if (!is.null(K_penalty_mat)) {
+      if (!is.matrix(K_penalty_mat) ||
+          nrow(K_penalty_mat) != ncol(X_whitened) ||
+          ncol(K_penalty_mat) != ncol(X_whitened)) {
+        warning("K_penalty_mat must be a square matrix with dimension equal to ncol(X_whitened).")
+        return(NULL)
+      }
+    } else {
+      if (is.null(projection_mats) || length(lambda_values) == 0) {
+        warning("Either K_penalty_mat or projection_mats and lambda_values must be provided when use_penalty_matrix = TRUE.")
+        return(NULL)
+      }
+      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
+        warning("projection_mats must contain at least P_Signal.")
+        return(NULL)
+      }
     }
   } else {
-    if (is.null(projection_mats) || length(lambda_values) == 0) {
-      warning("Either K_penalty_diag or projection_mats and lambda_values must be provided.")
-      return(NULL)
-    }
-    if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
-      warning("projection_mats must contain at least P_Signal.")
-      return(NULL)
+    if (!is.null(K_penalty_diag)) {
+      if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
+        warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
+        return(NULL)
+      }
+      if (any(K_penalty_diag < 0)) {
+        warning("All elements of K_penalty_diag must be non-negative.")
+        return(NULL)
+      }
+    } else {
+      if (is.null(projection_mats) || length(lambda_values) == 0) {
+        warning("Either K_penalty_diag or projection_mats and lambda_values must be provided.")
+        return(NULL)
+      }
+      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
+        warning("projection_mats must contain at least P_Signal.")
+        return(NULL)
+      }
     }
   }
 
@@ -266,39 +314,72 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
     # Proceeding, as ridge can handle p > n
   }
 
-  if (is.null(K_penalty_diag)) {
-    lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
-    lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
-    lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
-    lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+  if (use_penalty_matrix) {
+    if (is.null(K_penalty_mat)) {
+      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
+      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
+      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
+      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
 
-    if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
-      lambda_ratio <- lambda_signal / lambda_parallel
-      lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
-                                                      lambda_grid = lambda_grid * res_var_scale,
-                                                      lambda_ratio = lambda_ratio)
-      lambda_signal <- lambda_ratio * lambda_parallel
-    }
+      if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
+        lambda_ratio <- lambda_signal / lambda_parallel
+        lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
+                                                        lambda_grid = lambda_grid * res_var_scale,
+                                                        lambda_ratio = lambda_ratio)
+        lambda_signal <- lambda_ratio * lambda_parallel
+      }
 
-    n_reg <- ncol(X_eff)
-    K_penalty_diag <- rep(0, n_reg)
-    if (!is.null(projection_mats$P_GD)) {
-      K_penalty_diag <- K_penalty_diag + lambda_gd * diag(projection_mats$P_GD)
+      n_reg <- ncol(X_eff)
+      K_penalty_mat <- matrix(0, n_reg, n_reg)
+      if (!is.null(projection_mats$P_GD)) {
+        K_penalty_mat <- K_penalty_mat + lambda_gd * projection_mats$P_GD
+      }
+      if (!is.null(projection_mats$P_Unique)) {
+        K_penalty_mat <- K_penalty_mat + lambda_unique * projection_mats$P_Unique
+      }
+      if (!is.null(projection_mats$P_Noise)) {
+        K_penalty_mat <- K_penalty_mat + lambda_parallel * projection_mats$P_Noise
+      }
+      if (!is.null(projection_mats$P_Signal)) {
+        K_penalty_mat <- K_penalty_mat + lambda_signal * projection_mats$P_Signal
+      }
     }
-    if (!is.null(projection_mats$P_Unique)) {
-      K_penalty_diag <- K_penalty_diag + lambda_unique * diag(projection_mats$P_Unique)
-    }
-    if (!is.null(projection_mats$P_Noise)) {
-      K_penalty_diag <- K_penalty_diag + lambda_parallel * diag(projection_mats$P_Noise)
-    }
-    if (!is.null(projection_mats$P_Signal)) {
-      K_penalty_diag <- K_penalty_diag + lambda_signal * diag(projection_mats$P_Signal)
+  } else {
+    if (is.null(K_penalty_diag)) {
+      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
+      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
+      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
+      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+
+      if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
+        lambda_ratio <- lambda_signal / lambda_parallel
+        lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
+                                                        lambda_grid = lambda_grid * res_var_scale,
+                                                        lambda_ratio = lambda_ratio)
+        lambda_signal <- lambda_ratio * lambda_parallel
+      }
+
+      n_reg <- ncol(X_eff)
+      K_penalty_diag <- rep(0, n_reg)
+      if (!is.null(projection_mats$P_GD)) {
+        K_penalty_diag <- K_penalty_diag + lambda_gd * diag(projection_mats$P_GD)
+      }
+      if (!is.null(projection_mats$P_Unique)) {
+        K_penalty_diag <- K_penalty_diag + lambda_unique * diag(projection_mats$P_Unique)
+      }
+      if (!is.null(projection_mats$P_Noise)) {
+        K_penalty_diag <- K_penalty_diag + lambda_parallel * diag(projection_mats$P_Noise)
+      }
+      if (!is.null(projection_mats$P_Signal)) {
+        K_penalty_diag <- K_penalty_diag + lambda_signal * diag(projection_mats$P_Signal)
+      }
     }
   }
   
   # --- Solve Ridge Regression ---
   col_vars <- matrixStats::colVars(X_eff, na.rm = TRUE)
-  if (any(col_vars < .Machine$double.eps^0.5 & K_penalty_diag[which(col_vars < .Machine$double.eps^0.5)] < .Machine$double.eps^0.5 )) {
+  diag_pen <- if (use_penalty_matrix) diag(K_penalty_mat) else K_penalty_diag
+  if (any(col_vars < .Machine$double.eps^0.5 & diag_pen[which(col_vars < .Machine$double.eps^0.5)] < .Machine$double.eps^0.5 )) {
       warning("One or more regressors in X_eff have near-zero variance AND near-zero penalty. Solution may be unstable.")
   } else if (any(col_vars < .Machine$double.eps^0.5)) {
       warning("One or more regressors in X_eff have near-zero variance (but may be stabilized by penalty).")
@@ -316,9 +397,15 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       XtX <- crossprod(Xw)
       XtY <- crossprod(Xw, Yw)
 
-      safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
-      XtX_penalized <- XtX
-      diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+      if (use_penalty_matrix) {
+        K_mat_safe <- K_penalty_mat
+        diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
+        XtX_penalized <- XtX + K_mat_safe
+      } else {
+        safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
+        XtX_penalized <- XtX
+        diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+      }
 
       b <- tryCatch({
         chol_decomp <- chol(XtX_penalized)
@@ -342,12 +429,16 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
       return(NULL)
   }
   
-  # Add penalty to diagonal of XtX
-  # Ensure K_penalty_diag always has a small positive floor for numerical stability with Cholesky
-  safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps) 
-  
-  XtX_penalized <- XtX
-  diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+  # Add penalty matrix to XtX
+  if (use_penalty_matrix) {
+    K_mat_safe <- K_penalty_mat
+    diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
+    XtX_penalized <- XtX + K_mat_safe
+  } else {
+    safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
+    XtX_penalized <- XtX
+    diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+  }
   
   betas <- NULL
   tryCatch({

@@ -242,9 +242,18 @@ test_that("ndx_build_design_matrix generates correct polynomial degrees and inte
 
 test_that("ndx_build_design_matrix errors on row mismatches for inputs", {
   bad_motion <- motion_params_dm[1:(total_timepoints_dm-1), , drop=FALSE]
-  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=bad_motion, rpca_components=NULL, spectral_sines=NULL, 
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=bad_motion, rpca_components=NULL, spectral_sines=NULL,
                                       run_idx=run_idx_dm, TR=TR_test_dm, poly_degree=0, verbose=FALSE),
                "Row mismatch: motion_params")
+})
+
+test_that("ndx_build_design_matrix errors on invalid TR", {
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=c(2, 3), poly_degree=0, verbose=FALSE),
+               "single positive number")
+  expect_error(ndx_build_design_matrix(estimated_hrfs=NULL, events=events_dm, motion_params=NULL, rpca_components=NULL, spectral_sines=NULL,
+                                      run_idx=run_idx_dm, TR=-1, poly_degree=0, verbose=FALSE),
+               "single positive number")
 })
 
 test_that("ndx_build_design_matrix returns NULL if no regressors are formed", {
@@ -331,6 +340,7 @@ test_that("drop_zero_variance option removes constant regressors", {
   expect_false("rpca_comp_1" %in% colnames(X_drop))
 })
 
+
 test_that("ndx_build_design_matrix errors when events blockids are invalid", {
   events_bad <- events_dm
   events_bad$blockids[1] <- 99
@@ -369,4 +379,23 @@ test_that("non-sequential run_idx are mapped for events", {
   expect_true(is.matrix(X_nonseq))
   expect_equal(nrow(X_nonseq), total_timepoints_dm)
   expect_true(any(grepl("run_intercept_20", colnames(X_nonseq))))
+})
+                         
+test_that("near-constant regressors are removed when variance below epsilon", {
+  set.seed(123)
+  near_const_rpca <- matrix(1 + rnorm(total_timepoints_dm, sd = 1e-10), ncol = 1)
+  X_drop_near <- ndx_build_design_matrix(
+    estimated_hrfs = estimated_hrfs_dm,
+    events = events_dm,
+    motion_params = motion_params_dm,
+    rpca_components = near_const_rpca,
+    spectral_sines = NULL,
+    run_idx = run_idx_dm,
+    TR = TR_test_dm,
+    poly_degree = 0,
+    verbose = FALSE,
+    drop_zero_variance = TRUE,
+    zero_var_epsilon = 1e-8
+  )
+  expect_false("rpca_comp_1" %in% colnames(X_drop_near))
 })

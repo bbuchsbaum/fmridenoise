@@ -18,6 +18,8 @@
 #' @param run_idx Numeric vector indicating run membership for each timepoint in `Y_fmri`.
 #'   (e.g., c(rep(1,100), rep(2,100)) for two runs of 100 timepoints each).
 #' @param TR Numeric, repetition time in seconds.
+#' @param poly_degree Integer specifying the polynomial degree used for the
+#'   Legendre baseline model. Passed to `fmrireg::baseline_model`. Default: 1L.
 #' @return A list containing:
 #'   - `Y_residuals_current`: Matrix of residuals after the full initial GLM (task + motion + polynomials).
 #'   - `VAR_BASELINE_FOR_DES`: Numeric, variance of residuals from a task-only GLM (task + run intercepts).
@@ -44,14 +46,16 @@
 #' )
 #'
 #' initial_glm_output <- ndx_initial_glm(Y_fmri_example, events_example,
-#'                                     motion_params_example, run_idx_example, TR)
+#'                                     motion_params_example, run_idx_example, TR,
+#'                                     poly_degree = 2L)
 #' head(initial_glm_output$Y_residuals_current)
 #' print(initial_glm_output$VAR_BASELINE_FOR_DES)
 #' }
 #' @import fmrireg
 #' @import stats
 #' @export
-ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
+ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
+                            poly_degree = 1L) {
 
   # Validate inputs
   if (!is.matrix(Y_fmri)) {
@@ -80,6 +84,18 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
   if (!is.numeric(TR) || length(TR) != 1 || TR <= 0) {
     stop("TR must be a single positive number.")
   }
+
+  # Ensure events are aligned with run_idx
+  blocks_events <- sort(unique(events$blockids))
+  blocks_runs <- sort(unique(run_idx))
+  if (!identical(blocks_events, blocks_runs)) {
+    stop(sprintf(
+      "events$blockids %s do not match run_idx %s",
+      paste(blocks_events, collapse = ","),
+      paste(blocks_runs, collapse = ",")
+    ))
+  }
+  events <- events[order(factor(events$blockids, levels = unique(run_idx))), , drop = FALSE]
 
   # 1. Create Sampling Frame
   # table() on run_idx gives counts per run, which are the blocklens
@@ -175,9 +191,16 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
   nuisance_arg_for_bm_pass0 <- NULL
   if (ncol(mat_motion_params) > 0) { # Only add nuisance if there are motion params
     if (n_runs_from_sf > 1) {
-      # Split mat_motion_params by run_idx into a list of matrices
-      # Each element of the list will be the motion regressors for that run
-      split_motion_params <- split.data.frame(mat_motion_params, run_idx)
+      # Split mat_motion_params by run_idx into a list of matrices. Ensure the
+      # order of the splits follows the order of unique run indices.
+      split_motion_params <- split(mat_motion_params,
+                                   factor(run_idx, levels = unique(run_idx)))
+      if (length(split_motion_params) != length(sf$blocklens)) {
+        stop(sprintf(
+          "Number of split motion parameter matrices (%d) does not match number of blocks (%d)",
+          length(split_motion_params), length(sf$blocklens)
+        ))
+      }
       # Convert data frames in list to matrices
       nuisance_arg_for_bm_pass0 <- lapply(split_motion_params, as.matrix)
       # fmrireg might expect this to be a named list if multiple nuisance types, 
@@ -198,7 +221,7 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
     }
   }
 
-  bm_pass0 <- fmrireg::baseline_model(basis = "poly", degree = 1L, intercept = "runwise",
+  bm_pass0 <- fmrireg::baseline_model(basis = "poly", degree = poly_degree, intercept = "runwise",
                                       sframe = sf, nuisance_list = nuisance_arg_for_bm_pass0)
 
   model_pass0 <- fmrireg::fmri_model(event_model = em_task_only, baseline_model = bm_pass0)

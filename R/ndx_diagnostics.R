@@ -3,8 +3,9 @@
 #' This function creates a simple HTML report summarizing key diagnostics from
 #' a run of `NDX_Process_Subject`. It plots the Denoising Efficacy Score (DES)
 #' across passes, compares the power spectral density (PSD) of residuals from
-#' Pass 0 and the final ND-X pass, and optionally shows a spike "carpet" plot
-#' from the RPCA `S` matrix.
+#' Pass 0 and the final ND-X pass, visualizes \eqn{\beta}-stability across runs,
+#' shows the Ljung--Box p-value progression, and optionally displays a spike
+#' "carpet" plot from the RPCA `S` matrix.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
 #' @param pass0_residuals Matrix of residuals from `ndx_initial_glm` used as the
@@ -43,9 +44,35 @@ ndx_generate_html_report <- function(workflow_output,
                  main = "Denoising Efficacy Score per Pass")
   grDevices::dev.off()
 
+  # ---- Beta stability plot ----
+  beta_png <- NULL
+  if (!is.null(workflow_output$beta_history_per_pass)) {
+    beta_vals <- tryCatch(
+      calculate_beta_stability(workflow_output$beta_history_per_pass),
+      error = function(e) rep(NA_real_, length(workflow_output$beta_history_per_pass))
+    )
+    beta_png <- file.path(output_dir, "beta_stability_per_pass.png")
+    grDevices::png(beta_png, width = 600, height = 400)
+    graphics::plot(seq_along(beta_vals), beta_vals, type = "b",
+                   xlab = "Pass", ylab = "Beta Stability",
+                   ylim = c(-1, 1),
+                   main = "\u03B2-Stability Across Runs")
+    grDevices::dev.off()
+  }
+
   # ---- Residual PSD plot ----
   psd_png <- file.path(output_dir, "residual_psd.png")
   if (!is.null(workflow_output$Y_residuals_final_unwhitened)) {
+    if (nrow(pass0_residuals) != nrow(workflow_output$Y_residuals_final_unwhitened)) {
+      stop(
+        sprintf(
+          "Mismatch in residual lengths: pass0_residuals has %d rows, \
+workflow_output$Y_residuals_final_unwhitened has %d rows",
+          nrow(pass0_residuals),
+          nrow(workflow_output$Y_residuals_final_unwhitened)
+        )
+      )
+    }
     res0_mean <- rowMeans(pass0_residuals, na.rm = TRUE)
     res_final_mean <- rowMeans(workflow_output$Y_residuals_final_unwhitened, na.rm = TRUE)
     psd0 <- psd::pspectrum(res0_mean, x.frqsamp = 1/TR, plot = FALSE)
@@ -60,6 +87,23 @@ ndx_generate_html_report <- function(workflow_output,
     grDevices::dev.off()
   } else {
     psd_png <- NULL
+  }
+
+  # ---- Ljung-Box p-value plot ----
+  ljung_png <- NULL
+  if (!is.null(workflow_output$diagnostics_per_pass)) {
+    ljung_vals <- sapply(workflow_output$diagnostics_per_pass,
+                         function(d) d$ljung_box_p)
+    if (any(!is.na(ljung_vals))) {
+      ljung_png <- file.path(output_dir, "ljung_box_pvalues.png")
+      grDevices::png(ljung_png, width = 600, height = 400)
+      graphics::plot(seq_along(ljung_vals), ljung_vals, type = "b",
+                     xlab = "Pass", ylab = "Ljung-Box p-value",
+                     ylim = c(0, 1),
+                     main = "Residual Whiteness (Ljung-Box)")
+      graphics::abline(h = 0.05, col = "red", lty = 2)
+      grDevices::dev.off()
+    }
   }
 
   # ---- Spike carpet plot ----
@@ -132,12 +176,32 @@ ndx_generate_html_report <- function(workflow_output,
     "</div>"
   )
 
+  # ---- Add beta stability section ----
+  if (!is.null(beta_png)) {
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>&beta;-Stability Across Runs</h2>",
+      sprintf("<img src='%s' alt='Beta stability'>", basename(beta_png)),
+      "</div>"
+    )
+  }
+
   # ---- Add PSD section ----
   if (!is.null(psd_png)) {
     html_lines <- c(html_lines,
       "<div class='section'>",
       "<h2>Residual Power Spectral Density</h2>",
       sprintf("<img src='%s' alt='Residual PSD'>", basename(psd_png)),
+      "</div>"
+    )
+  }
+
+  # ---- Add Ljung-Box section ----
+  if (!is.null(ljung_png)) {
+    html_lines <- c(html_lines,
+      "<div class='section'>",
+      "<h2>Ljung-Box p-value per Pass</h2>",
+      sprintf("<img src='%s' alt='Ljung-Box p-values'>", basename(ljung_png)),
       "</div>"
     )
   }
@@ -164,41 +228,25 @@ ndx_generate_html_report <- function(workflow_output,
     }
     
     # Add Annihilation Verdict
-    if (!is.null(workflow_output$gdlite_pcs) && 
-        (!is.null(workflow_output$rpca_orthogonalized) || !is.null(workflow_output$spectral_orthogonalized))) {
-      
-      # Calculate component variances
-      var_gdlite <- sum(workflow_output$gdlite_pcs^2, na.rm = TRUE)
-      
-      var_ndx_unique <- 0
-      if (!is.null(workflow_output$rpca_orthogonalized)) {
-        var_ndx_unique <- var_ndx_unique + sum(workflow_output$rpca_orthogonalized^2, na.rm = TRUE)
-      }
-      if (!is.null(workflow_output$spectral_orthogonalized)) {
-        var_ndx_unique <- var_ndx_unique + sum(workflow_output$spectral_orthogonalized^2, na.rm = TRUE)
-      }
-      
-      verdict_ratio <- if (var_gdlite > 0) var_ndx_unique / var_gdlite else 0
-      
-      # Determine verdict category
-      if (verdict_ratio < 0.1) {
-        verdict <- "Tie"
+    verdict_stats <- ndx_annihilation_verdict_stats(workflow_output)
+    if (!is.na(verdict_stats$var_ratio) && !is.na(verdict_stats$verdict)) {
+      verdict_ratio <- verdict_stats$var_ratio
+      verdict <- verdict_stats$verdict
+
+      if (verdict == "Tie") {
         color <- "#888888"
         description <- "GLMdenoise and ND-X unique components capture similar noise variance."
-      } else if (verdict_ratio < 0.5) {
-        verdict <- "Win"
+      } else if (verdict == "Win") {
         color <- "#5cb85c"
         description <- "ND-X unique components capture additional noise not found by GLMdenoise."
-      } else if (verdict_ratio < 1.0) {
-        verdict <- "Decisive Win"
+      } else if (verdict == "Decisive Win") {
         color <- "#5bc0de"
         description <- "ND-X unique components capture substantial additional noise."
       } else {
-        verdict <- "Annihilation"
         color <- "#d9534f"
         description <- "ND-X unique components capture more noise variance than GLMdenoise components."
       }
-      
+
       html_lines <- c(html_lines,
         "<div class='card' style='text-align: center;'>",
         "<h3>Annihilation Verdict</h3>",
@@ -361,6 +409,9 @@ ndx_generate_html_report <- function(workflow_output,
 #' ratio and category (if applicable), convergence information (number of passes),
 #' final rho noise projection, and all final adaptive hyperparameters.
 #' Downstream tools can parse this certificate to verify denoising quality.
+#' The workflow hash included in the JSON is computed from the diagnostics and
+#' key settings rather than the full `workflow_output` object to avoid
+#' excessive memory usage.
 #'
 #' @param workflow_output List returned by `NDX_Process_Subject`.
 #' @param output_path File path to save the JSON sidecar. Defaults to
@@ -401,7 +452,13 @@ ndx_generate_json_certificate <- function(workflow_output,
       lambda_perp_signal = val_or_na(last_diag$lambda_perp_signal)
     ),
     timestamp = as.character(Sys.time()),
-    workflow_hash = digest::digest(workflow_output)
+    workflow_hash = digest::digest(list(
+      diagnostics = workflow_output$diagnostics_per_pass,
+      settings = list(
+        num_passes_completed = workflow_output$num_passes_completed,
+        annihilation_mode_active = val_or_na(workflow_output$annihilation_mode_active)
+      )
+    ))
   )
 
   jsonlite::write_json(cert_list, output_path, pretty = TRUE, auto_unbox = TRUE)

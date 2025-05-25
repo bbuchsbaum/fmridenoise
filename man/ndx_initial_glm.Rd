@@ -4,7 +4,7 @@
 \alias{ndx_initial_glm}
 \title{Perform an Initial GLM to Generate Residuals and Baseline Variance}
 \usage{
-ndx_initial_glm(Y_fmri, events, motion_params, run_idx, TR)
+ndx_initial_glm(Y_fmri, events, motion_params, run_idx, TR, poly_degree = 1L)
 }
 \arguments{
 \item{Y_fmri}{Matrix of fMRI data (timepoints x voxels). Assumed to be
@@ -24,6 +24,8 @@ Must have the same number of rows as `Y_fmri`.}
 (e.g., c(rep(1,100), rep(2,100)) for two runs of 100 timepoints each).}
 
 \item{TR}{Numeric, repetition time in seconds.}
+\item{poly_degree}{Integer specifying the polynomial degree used for the
+Legendre baseline. Passed to \code{fmrireg::baseline_model}. Default: 1L.}
 }
 \value{
 A list containing:
@@ -59,7 +61,8 @@ events_example <- data.frame(
 )
 
 initial_glm_output <- ndx_initial_glm(Y_fmri_example, events_example,
-                                    motion_params_example, run_idx_example, TR)
+                                    motion_params_example, run_idx_example, TR,
+                                    poly_degree = 2L)
 head(initial_glm_output$Y_residuals_current)
 print(initial_glm_output$VAR_BASELINE_FOR_DES)
 }

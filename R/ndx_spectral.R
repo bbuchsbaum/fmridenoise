@@ -22,11 +22,14 @@
 #'   criterion required to retain a candidate pair. Default 2.
 #' @param verbose Logical, whether to print verbose diagnostic messages.
 #'
-#' @return A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
-#'   rows. Each pair of columns represents sine and cosine regressors for an
-#'   identified peak frequency. The attribute "freq" contains the frequencies
-#'   (in Hz) of the selected peaks. Returns NULL if no peaks are found or if
-#'   input is unsuitable.
+#' @return A matrix with `2 * n_selected_peaks` columns and
+#'   `length(mean_residual_for_spectrum)` rows. Each pair of columns
+#'   represents sine and cosine regressors for an identified peak
+#'   frequency. Attributes \code{"freq_hz"} and \code{"freq_rad_s"}
+#'   store the selected peak frequencies in Hz and radians/sec,
+#'   respectively. If no peaks survive selection, a zero-column matrix
+#'   with these attributes is returned. The function returns \code{NULL}
+#'   only when the input is invalid or when spectral estimation fails.
 #'
 #' @examples
 #' \dontrun{
@@ -45,7 +48,7 @@
 #'   if (!is.null(U_sines)) {
 #'     print(paste("Generated", ncol(U_sines) / 2, "sine/cosine pairs."))
 #'     print("Identified frequencies (Hz):")
-#'     print(attr(U_sines, "freq"))
+#'     print(attr(U_sines, "freq_hz"))
 #'     # plot(time_points, U_sines[,1], type='l', main="First Sine Regressor")
 #'   }
 #' }
@@ -68,6 +71,29 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
   if (!is.numeric(TR) || TR <= 0) {
     warning("TR must be a positive numeric value.")
     return(NULL)
+  }
+
+  if (!all(is.finite(mean_residual_for_spectrum))) {
+    warning("mean_residual_for_spectrum contains non-finite values.")
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
+
+  default_n_sine_candidates <- 6
+  if (!is.numeric(n_sine_candidates) || length(n_sine_candidates) != 1 ||
+      n_sine_candidates <= 0) {
+    warning(sprintf("n_sine_candidates must be > 0. Using default %d.",
+                    default_n_sine_candidates))
+    n_sine_candidates <- default_n_sine_candidates
+  }
+
+  default_selection_delta_threshold <- 2
+  if (!is.numeric(selection_delta_threshold) ||
+      length(selection_delta_threshold) != 1 ||
+      selection_delta_threshold < 0) {
+    warning(sprintf(
+      "selection_delta_threshold must be >= 0. Using default %.2f.",
+      default_selection_delta_threshold
+    ))
+    selection_delta_threshold <- default_selection_delta_threshold
   }
 
   # De-mean the series (Feedback 2.1)
@@ -110,12 +136,12 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
                                    plot    = FALSE)
   }, error = function(e) {
     warning(paste("multitaper::spec.mtm failed:", e$message))
-    mt_res <<- NULL
+    assign("mt_res", NULL, envir = parent.env(environment()))
   })
 
   if (is.null(mt_res) || is.null(mt_res$spec) || is.null(mt_res$freq) || length(mt_res$spec) == 0) {
     warning("Spectrum estimation via spec.mtm did not yield valid spec or freq.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   nyquist_freq  <- 1 / (2 * TR)
@@ -127,7 +153,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (sum(keep_indices) == 0) {
     warning("No frequencies to search for peaks after applying guard factor and excluding DC.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
 
   spec_to_search <- mt_res$spec[keep_indices]
@@ -145,7 +171,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (is.null(peak_info_all) || nrow(peak_info_all) == 0) {
     if (verbose) message("No initial peaks found in the spectrum by pracma::findpeaks.")
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
   
   # Peak prominence filter
@@ -166,7 +192,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 
   if (is.null(peak_info) || nrow(peak_info) == 0) {
     if (verbose) message(sprintf("No significant peaks found after prominence filter (threshold: %.4g).", prom_thresh))
-    return(NULL)
+    return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
   }
   
   # Select top n_sine_candidates peaks based on their amplitude (peak_info already sorted by findpeaks with sortstr=TRUE)
@@ -289,6 +315,15 @@ Select_Significant_Spectral_Regressors <- function(y, U_candidates,
   }
   
   criterion <- match.arg(criterion)
+
+  default_delta_threshold <- 2
+  if (!is.numeric(delta_threshold) || length(delta_threshold) != 1 ||
+      delta_threshold < 0) {
+    warning(sprintf("[Select_SSR] delta_threshold must be >= 0. Using default %.2f.",
+                    default_delta_threshold))
+    delta_threshold <- default_delta_threshold
+  }
+
   n_pairs <- ncol(U_candidates) %/% 2
   
   # If U_candidates is a 0-column matrix (e.g. no peaks from ndx_spectral_sines), n_pairs will be 0
