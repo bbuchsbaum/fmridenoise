@@ -16,11 +16,13 @@ test_that("Unstable averaged AR coefficients skip design whitening", {
     }
   }
 
+  ndx_env <- new.env(parent = environment(ndx_ar2_whitening))
+  ndx_env$colMeans <- stub_colMeans
+  ndx_ar2_whitening_stub <- ndx_ar2_whitening
+  environment(ndx_ar2_whitening_stub) <- ndx_env
+
   expect_warning(
-    res <- with_mocked_bindings(
-      colMeans = stub_colMeans,
-      ndx_ar2_whitening(Y, X, Y_res, order = 2L, verbose = FALSE)
-    ),
+    res <- ndx_ar2_whitening_stub(Y, X, Y_res, order = 2L, verbose = FALSE),
     regexp = "Averaged AR coefficients"
   )
   expect_null(res$AR_coeffs_global)
