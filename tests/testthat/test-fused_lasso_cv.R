@@ -22,6 +22,8 @@ test_that("cv_fusedlasso returns best parameters from grid and finite errors", {
               label = "best_lambda should come from lambda_grid")
   expect_true(res$best_gamma %in% gamma_grid,
               label = "best_gamma should come from gamma_grid")
+  expect_equal(dim(res$cv_error_matrix), c(length(lambda_grid), length(gamma_grid)),
+               label = "cv_error_matrix should have correct dimensions")
   expect_true(all(is.finite(res$cv_error_matrix)),
               label = "cv_error_matrix should have finite values")
 })
