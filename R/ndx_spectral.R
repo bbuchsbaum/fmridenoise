@@ -77,6 +77,8 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
     warning("mean_residual_for_spectrum contains non-finite values.")
     return(.empty_spec_matrix(length(mean_residual_for_spectrum)))
 
+  }
+
   default_n_sine_candidates <- 6
   if (!is.numeric(n_sine_candidates) || length(n_sine_candidates) != 1 ||
       n_sine_candidates <= 0) {
