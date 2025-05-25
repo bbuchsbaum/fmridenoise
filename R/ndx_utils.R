@@ -13,6 +13,19 @@ NULL
 
 # Placeholder for actual utility functions
 
+#' Return `NA` if Value is `NULL`
+#'
+#' Simple helper that returns `NA` when the input is `NULL`, otherwise the
+#' input value unchanged.
+#'
+#' @param x An object that might be `NULL`.
+#' @return `NA` if `x` is `NULL`, otherwise `x`.
+#' @keywords internal
+#' @export
+ndx_val_or_na <- function(x) {
+  if (is.null(x)) NA else x
+}
+
 #' Calculate OLS residuals using lm.fit
 #'
 #' @param Y Dependent variable matrix (timepoints x variables/voxels).

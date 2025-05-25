@@ -430,33 +430,31 @@ ndx_generate_json_certificate <- function(workflow_output,
 
   last_diag <- workflow_output$diagnostics_per_pass[[workflow_output$num_passes_completed]]
 
-  val_or_na <- function(x) if (is.null(x)) NA else x
-
   verdict_stats <- ndx_annihilation_verdict_stats(workflow_output)
 
   cert_list <- list(
     ndx_version = as.character(utils::packageVersion("ndx")),
-    final_DES = val_or_na(last_diag$DES),
-    ljung_box_p = val_or_na(last_diag$ljung_box_p),
-    var_ratio = val_or_na(verdict_stats$var_ratio),
-    verdict = val_or_na(verdict_stats$verdict),
-    passes_converged = val_or_na(workflow_output$num_passes_completed),
-    final_rho_noise_projection = val_or_na(last_diag$rho_noise_projection),
-    final_beta_stability = val_or_na(tail(calculate_beta_stability(workflow_output$beta_history_per_pass),1)),
-    ljung_box_p_median = val_or_na(median(compute_ljung_box_pvalues(workflow_output$Y_residuals_final_unwhitened), na.rm=TRUE)),
+    final_DES = ndx_val_or_na(last_diag$DES),
+    ljung_box_p = ndx_val_or_na(last_diag$ljung_box_p),
+    var_ratio = ndx_val_or_na(verdict_stats$var_ratio),
+    verdict = ndx_val_or_na(verdict_stats$verdict),
+    passes_converged = ndx_val_or_na(workflow_output$num_passes_completed),
+    final_rho_noise_projection = ndx_val_or_na(last_diag$rho_noise_projection),
+    final_beta_stability = ndx_val_or_na(tail(calculate_beta_stability(workflow_output$beta_history_per_pass),1)),
+    ljung_box_p_median = ndx_val_or_na(median(compute_ljung_box_pvalues(workflow_output$Y_residuals_final_unwhitened), na.rm=TRUE)),
     final_adaptive_hyperparameters = list(
-      k_rpca_global = val_or_na(last_diag$k_rpca_global),
-      num_hrf_clusters = val_or_na(last_diag$num_hrf_clusters),
-      num_spectral_sines = val_or_na(last_diag$num_spectral_sines),
-      lambda_parallel_noise = val_or_na(last_diag$lambda_parallel_noise),
-      lambda_perp_signal = val_or_na(last_diag$lambda_perp_signal)
+      k_rpca_global = ndx_val_or_na(last_diag$k_rpca_global),
+      num_hrf_clusters = ndx_val_or_na(last_diag$num_hrf_clusters),
+      num_spectral_sines = ndx_val_or_na(last_diag$num_spectral_sines),
+      lambda_parallel_noise = ndx_val_or_na(last_diag$lambda_parallel_noise),
+      lambda_perp_signal = ndx_val_or_na(last_diag$lambda_perp_signal)
     ),
     timestamp = as.character(Sys.time()),
     workflow_hash = digest::digest(list(
       diagnostics = workflow_output$diagnostics_per_pass,
       settings = list(
         num_passes_completed = workflow_output$num_passes_completed,
-        annihilation_mode_active = val_or_na(workflow_output$annihilation_mode_active)
+        annihilation_mode_active = ndx_val_or_na(workflow_output$annihilation_mode_active)
       )
     ))
   )
