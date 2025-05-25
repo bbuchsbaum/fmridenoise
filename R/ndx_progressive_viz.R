@@ -5,6 +5,12 @@
 #' static HTML that works without requiring a Shiny server.
 #'
 #' @param workflow_output List returned by NDX_Process_Subject with Annihilation Mode enabled
+#' @param workflow_output List returned by `NDX_Process_Subject` with
+#'   Annihilation Mode enabled. It must contain at minimum the elements
+#'   `diagnostics_per_pass` (each with a `DES` value),
+#'   `beta_history_per_pass` (list of beta matrices per pass),
+#'   `pass0_residuals`, and `Y_residuals_final_unwhitened`.
+#' @param gdlite_only_results Optional results from running with only GLMdenoise components
 #' @param output_dir Directory to save visualization files
 #' @param width Width of the HTML widget
 #' @param height Height of the HTML widget
@@ -168,33 +174,25 @@ ndx_calculate_annihilation_verdict <- function(workflow_output) {
 
 #' Create DES Progression Plot
 #'
-#' @param workflow_output List returned by NDX_Process_Subject
+#' @param workflow_output Output from `NDX_Process_Subject`. Must contain a
+#'   `diagnostics_per_pass` list with a numeric `DES` element for each pass.
 #' @param stages Vector of stage names
 #' @return Plotly plot object
 #' @keywords internal
 create_des_progression_plot <- function(workflow_output, stages) {
-  # For a real implementation, you would extract actual DES values from different stages
-  # Here we're simulating progression for illustration
-  
-  # Extract the final DES value
-  final_des <- if (!is.null(workflow_output$diagnostics_per_pass) && 
-                   length(workflow_output$diagnostics_per_pass) > 0) {
-    last_diag <- workflow_output$diagnostics_per_pass[[length(workflow_output$diagnostics_per_pass)]]
-    if (!is.null(last_diag$DES)) last_diag$DES else 0.5
-  } else {
-    0.5  # Default if not available
+  if (is.null(workflow_output$diagnostics_per_pass) ||
+      length(workflow_output$diagnostics_per_pass) == 0) {
+    stop("workflow_output must contain diagnostics_per_pass with DES values")
   }
-  
-  # Simulate values for earlier stages (in a real implementation, these would come from actual results)
-  des_values <- c(
-    final_des * 0.4,  # Stage 1: GD-equivalent, typically worst
-    final_des * 0.65, # Stage 2: + NDX unique components
-    final_des * 0.85, # Stage 3: + Anisotropic ridge
-    final_des         # Stage 4: Final (iterative refinement)
-  )
-  
-  # Create plot
-  plot_ly(x = stages, y = des_values, type = "scatter", mode = "lines+markers",
+
+  des_values <- vapply(workflow_output$diagnostics_per_pass,
+                       function(d) d$DES %||% NA_real_,
+                       numeric(1))
+
+  stage_labels <- stages[seq_along(des_values)]
+
+  plot_ly(x = stage_labels, y = des_values, type = "scatter",
+          mode = "lines+markers",
           marker = list(size = 10, color = "#2C3E50"),
           line = list(width = 3, color = "#2C3E50")) %>%
     layout(xaxis = list(title = "Processing Stage"),
@@ -204,17 +202,21 @@ create_des_progression_plot <- function(workflow_output, stages) {
 
 #' Create Beta Stability Plot
 #'
-#' @param workflow_output List returned by NDX_Process_Subject
+#' @param workflow_output Output from `NDX_Process_Subject`. Must contain a
+#'   `beta_history_per_pass` list with beta matrices for each pass.
 #' @param stages Vector of stage names
 #' @return Plotly plot object
 #' @keywords internal
 create_beta_stability_plot <- function(workflow_output, stages) {
-  # Simulate beta stability values (correlation across runs)
-  # In a real implementation, these would be extracted from actual results
-  
-  beta_stability <- c(0.45, 0.60, 0.75, 0.85)
-  
-  plot_ly(x = stages, y = beta_stability, type = "scatter", mode = "lines+markers",
+  if (is.null(workflow_output$beta_history_per_pass) ||
+      length(workflow_output$beta_history_per_pass) == 0) {
+    stop("workflow_output must contain beta_history_per_pass")
+  }
+
+  beta_stability <- calculate_beta_stability(workflow_output$beta_history_per_pass)
+  stage_labels <- stages[seq_along(beta_stability)]
+
+  plot_ly(x = stage_labels, y = beta_stability, type = "scatter", mode = "lines+markers",
           marker = list(size = 10, color = "#E74C3C"),
           line = list(width = 3, color = "#E74C3C")) %>%
     layout(xaxis = list(title = "Processing Stage"),
@@ -224,34 +226,30 @@ create_beta_stability_plot <- function(workflow_output, stages) {
 
 #' Create PSD Progression Plot
 #'
-#' @param workflow_output List returned by NDX_Process_Subject
+#' @param workflow_output Output from `NDX_Process_Subject`. Must contain
+#'   `pass0_residuals` and `Y_residuals_final_unwhitened` for PSD estimation.
 #' @param stages Vector of stage names
 #' @return Plotly plot object
 #' @keywords internal
+#' @importFrom psd pspectrum
 create_psd_progression_plot <- function(workflow_output, stages) {
-  # In a real implementation, you would extract actual PSD values
-  # Here we're creating sample data for illustration
-  
-  # Create frequency range
-  freq <- seq(0, 0.25, length.out = 100)
-  
-  # Create simulated PSD profiles for each stage
-  # Each progresses to less residual power, especially at lower frequencies
-  psd_stage1 <- 10 / (1 + 40 * freq) + 0.5
-  psd_stage2 <- 7 / (1 + 50 * freq) + 0.4
-  psd_stage3 <- 5 / (1 + 60 * freq) + 0.3
-  psd_stage4 <- 3 / (1 + 70 * freq) + 0.2
-  
+  if (is.null(workflow_output$pass0_residuals) ||
+      is.null(workflow_output$Y_residuals_final_unwhitened)) {
+    stop("workflow_output must contain pass0_residuals and Y_residuals_final_unwhitened")
+  }
+
+  res0_mean <- rowMeans(workflow_output$pass0_residuals, na.rm = TRUE)
+  res_final_mean <- rowMeans(workflow_output$Y_residuals_final_unwhitened, na.rm = TRUE)
+
+  psd0 <- psd::pspectrum(res0_mean, plot = FALSE)
+  psdF <- psd::pspectrum(res_final_mean, plot = FALSE)
+
   plot_ly() %>%
-    add_trace(x = freq, y = psd_stage1, name = "Stage 1", type = "scatter", mode = "lines",
+    add_trace(x = psd0$freq, y = psd0$spec, name = "Stage 1", type = "scatter", mode = "lines",
               line = list(width = 2, color = "#3498DB")) %>%
-    add_trace(x = freq, y = psd_stage2, name = "Stage 2", type = "scatter", mode = "lines",
-              line = list(width = 2, color = "#2980B9")) %>%
-    add_trace(x = freq, y = psd_stage3, name = "Stage 3", type = "scatter", mode = "lines",
-              line = list(width = 2, color = "#1ABC9C")) %>%
-    add_trace(x = freq, y = psd_stage4, name = "Stage 4", type = "scatter", mode = "lines",
+    add_trace(x = psdF$freq, y = psdF$spec, name = "Stage 4", type = "scatter", mode = "lines",
               line = list(width = 3, color = "#16A085")) %>%
-    layout(xaxis = list(title = "Frequency (Hz)"),
+    layout(xaxis = list(title = "Frequency"),
            yaxis = list(title = "Power", type = "log"),
            legend = list(x = 0.7, y = 0.9))
 }
