@@ -196,9 +196,17 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
         warning("weights matrix must match dimensions of Y_whitened")
         return(NULL)
       }
+      if (any(!is.finite(as.vector(weights))) || any(as.vector(weights) < 0)) {
+        warning("weights must contain non-negative finite numbers")
+        return(NULL)
+      }
     } else if (is.numeric(weights) && is.vector(weights)) {
       if (length(weights) != nrow(Y_whitened)) {
         warning("weights vector length must equal number of rows in Y_whitened")
+        return(NULL)
+      }
+      if (any(!is.finite(weights)) || any(weights < 0)) {
+        warning("weights must contain non-negative finite numbers")
         return(NULL)
       }
     } else {
@@ -272,12 +280,18 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
     lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
     lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
 
-    if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
-      lambda_ratio <- lambda_signal / lambda_parallel
-      lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
-                                                      lambda_grid = lambda_grid * res_var_scale,
-                                                      lambda_ratio = lambda_ratio)
-      lambda_signal <- lambda_ratio * lambda_parallel
+    if (gcv_lambda) {
+      if (!is.null(projection_mats$P_Noise)) {
+        lambda_ratio <- lambda_signal / lambda_parallel
+        lambda_parallel <- ndx_gcv_tune_lambda_parallel(
+          Y_eff, X_eff, projection_mats$P_Noise,
+          lambda_grid = lambda_grid * res_var_scale,
+          lambda_ratio = lambda_ratio
+        )
+        lambda_signal <- lambda_ratio * lambda_parallel
+      } else {
+        warning("gcv_lambda = TRUE but projection_mats$P_Noise is missing. Skipping GCV tuning.")
+      }
     }
 
     n_reg <- ncol(X_eff)
