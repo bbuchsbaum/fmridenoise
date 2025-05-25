@@ -3,6 +3,7 @@
 #' Given orthonormal basis matrices describing different nuisance subspaces,
 #' this helper constructs the projection matrices used by anisotropic ridge
 #' regression. Any NULL or empty basis results in a NULL projector.
+#' This function is part of the modular anisotropic ridge API.
 #'
 #' @param U_GD Matrix of GLMdenoise PCs (n_regressors x k1). Optional.
 #' @param U_Unique Matrix of nuisance components unique to ND-X (n_regressors x k2). Optional.
@@ -40,6 +41,7 @@ ndx_compute_projection_matrices <- function(U_GD = NULL, U_Unique = NULL,
 #' Performs a simple GCV search over a grid of lambda_parallel values. The
 #' lambda for the orthogonal complement (`lambda_perp`) is set as
 #' `lambda_ratio * lambda_parallel`.
+#' This helper is part of the modular anisotropic ridge API.
 #'
 #' @param Y_whitened Numeric matrix of whitened responses.
 #' @param X_whitened Numeric matrix of whitened design.
@@ -94,6 +96,8 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
 #' Simple heuristic to adjust lambda_parallel depending on how much residual
 #' variance projects onto the noise subspace.
 #'
+#' Part of the modular anisotropic ridge API.
+#'
 #' @param lambda_parallel Current lambda_parallel value.
 #' @param rho_noise_projection Proportion of residual variance projected onto the noise subspace.
 #' @param high_threshold Increase lambda if rho > this value. Default 0.10.
@@ -119,6 +123,7 @@ ndx_update_lambda_aggressiveness <- function(lambda_parallel, rho_noise_projecti
 #' Computes a simple estimate of the residual variance from a whitened
 #' design matrix and response matrix. This is used for scaling the lambda
 #' grid during GCV search in anisotropic ridge regression.
+#' Part of the modular anisotropic ridge API.
 #'
 #' @param Y_whitened Numeric matrix of whitened responses.
 #' @param X_whitened Numeric matrix of whitened design.
@@ -151,6 +156,7 @@ ndx_estimate_res_var_whitened <- function(Y_whitened, X_whitened, na_mask = NULL
 #' Solves for beta coefficients in a ridge regression model: Y = X beta + E,
 #' minimizing ||Y - X beta||^2 + beta^T K beta, where K is a diagonal penalty matrix.
 #' Handles missing data specified by `na_mask` by removing corresponding timepoints.
+#' This solver underpins the modular anisotropic ridge API.
 #'
 #' @param Y_whitened A numeric matrix of whitened dependent variables (timepoints x voxels/responses).
 #' @param X_whitened A numeric matrix of whitened regressors (timepoints x n_regressors).
@@ -482,6 +488,7 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
 #' Extracts beta coefficients corresponding to specified task regressors from the full
 #' set of beta coefficients. For Sprint 1, this function primarily handles extraction.
 #' The "unwhitening" aspect is a placeholder for future refinement.
+#' This helper is part of the modular anisotropic ridge API.
 #'
 #' @param betas_whitened A matrix (total_regressors x voxels) of whitened beta coefficients,
 #'   typically the output of `ndx_solve_ridge`.
