@@ -175,9 +175,16 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR) {
   nuisance_arg_for_bm_pass0 <- NULL
   if (ncol(mat_motion_params) > 0) { # Only add nuisance if there are motion params
     if (n_runs_from_sf > 1) {
-      # Split mat_motion_params by run_idx into a list of matrices
-      # Each element of the list will be the motion regressors for that run
-      split_motion_params <- split.data.frame(mat_motion_params, run_idx)
+      # Split mat_motion_params by run_idx into a list of matrices. Ensure the
+      # order of the splits follows the order of unique run indices.
+      split_motion_params <- split(mat_motion_params,
+                                   factor(run_idx, levels = unique(run_idx)))
+      if (length(split_motion_params) != length(sf$blocklens)) {
+        stop(sprintf(
+          "Number of split motion parameter matrices (%d) does not match number of blocks (%d)",
+          length(split_motion_params), length(sf$blocklens)
+        ))
+      }
       # Convert data frames in list to matrices
       nuisance_arg_for_bm_pass0 <- lapply(split_motion_params, as.matrix)
       # fmrireg might expect this to be a named list if multiple nuisance types, 
