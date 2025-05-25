@@ -13,6 +13,7 @@
 #' @importFrom htmlwidgets saveWidget
 #' @importFrom htmltools tags tagList div HTML
 #' @importFrom plotly plot_ly add_trace layout
+#' @importFrom magrittr %>%
 #' @export
 ndx_generate_progressive_enhancement <- function(workflow_output, 
                                                 gdlite_only_results = NULL,
