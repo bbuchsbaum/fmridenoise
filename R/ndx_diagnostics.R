@@ -164,41 +164,25 @@ ndx_generate_html_report <- function(workflow_output,
     }
     
     # Add Annihilation Verdict
-    if (!is.null(workflow_output$gdlite_pcs) && 
-        (!is.null(workflow_output$rpca_orthogonalized) || !is.null(workflow_output$spectral_orthogonalized))) {
-      
-      # Calculate component variances
-      var_gdlite <- sum(workflow_output$gdlite_pcs^2, na.rm = TRUE)
-      
-      var_ndx_unique <- 0
-      if (!is.null(workflow_output$rpca_orthogonalized)) {
-        var_ndx_unique <- var_ndx_unique + sum(workflow_output$rpca_orthogonalized^2, na.rm = TRUE)
-      }
-      if (!is.null(workflow_output$spectral_orthogonalized)) {
-        var_ndx_unique <- var_ndx_unique + sum(workflow_output$spectral_orthogonalized^2, na.rm = TRUE)
-      }
-      
-      verdict_ratio <- if (var_gdlite > 0) var_ndx_unique / var_gdlite else 0
-      
-      # Determine verdict category
-      if (verdict_ratio < 0.1) {
-        verdict <- "Tie"
+    verdict_stats <- ndx_annihilation_verdict_stats(workflow_output)
+    if (!is.na(verdict_stats$var_ratio) && !is.na(verdict_stats$verdict)) {
+      verdict_ratio <- verdict_stats$var_ratio
+      verdict <- verdict_stats$verdict
+
+      if (verdict == "Tie") {
         color <- "#888888"
         description <- "GLMdenoise and ND-X unique components capture similar noise variance."
-      } else if (verdict_ratio < 0.5) {
-        verdict <- "Win"
+      } else if (verdict == "Win") {
         color <- "#5cb85c"
         description <- "ND-X unique components capture additional noise not found by GLMdenoise."
-      } else if (verdict_ratio < 1.0) {
-        verdict <- "Decisive Win"
+      } else if (verdict == "Decisive Win") {
         color <- "#5bc0de"
         description <- "ND-X unique components capture substantial additional noise."
       } else {
-        verdict <- "Annihilation"
         color <- "#d9534f"
         description <- "ND-X unique components capture more noise variance than GLMdenoise components."
       }
-      
+
       html_lines <- c(html_lines,
         "<div class='card' style='text-align: center;'>",
         "<h3>Annihilation Verdict</h3>",
