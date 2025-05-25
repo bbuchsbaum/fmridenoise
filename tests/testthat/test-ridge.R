@@ -109,8 +109,18 @@ test_that("ndx_solve_anisotropic_ridge input validation works", {
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good[1:10, ], K_diag_good), "Y_whitened and X_whitened must have the same number of rows", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good[1]), "K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, "a"), "K_penalty_diag must be a numeric vector", fixed = TRUE) 
-  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, c(-0.1, 0.1, 0.1)), "All elements of K_penalty_diag must be non-negative", fixed = TRUE) 
+  expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, c(-0.1, 0.1, 0.1)), "All elements of K_penalty_diag must be non-negative", fixed = TRUE)
   expect_warning(ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, na_mask=rep(TRUE, 5)), "na_mask must be a logical vector with length equal to nrow(Y_whitened).", fixed = TRUE)
+
+  w_bad_neg <- c(rep(1, nrow(Y_good) - 1), -1)
+  expect_warning(res_neg <- ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, weights = w_bad_neg),
+                 "weights must contain non-negative finite numbers", fixed = TRUE)
+  expect_null(res_neg)
+
+  w_bad_inf <- c(rep(1, nrow(Y_good) - 1), Inf)
+  expect_warning(res_inf <- ndx_solve_anisotropic_ridge(Y_good, X_good, K_diag_good, weights = w_bad_inf),
+                 "weights must contain non-negative finite numbers", fixed = TRUE)
+  expect_null(res_inf)
   
   Y_short_for_warn <- Y_good[1:2, , drop=FALSE]
   X_wide_for_warn <- X_good[1:2, , drop=FALSE] 
