@@ -144,6 +144,328 @@ ndx_estimate_res_var_whitened <- function(Y_whitened, X_whitened, na_mask = NULL
   stats::var(as.vector(fit$residuals), na.rm = TRUE)
 }
 
+#' Validate Inputs for Ridge Solver
+#'
+#' Performs the set of sanity checks originally embedded in
+#' `ndx_solve_anisotropic_ridge`.
+#'
+#' @keywords internal
+validate_ridge_inputs <- function(Y_whitened, X_whitened, K_penalty_diag = NULL,
+                                  na_mask = NULL, projection_mats = NULL,
+                                  lambda_values = NULL, weights = NULL,
+                                  K_penalty_mat = NULL,
+                                  use_penalty_matrix = FALSE) {
+  if (is.null(Y_whitened) || is.null(X_whitened)) {
+    warning("Y_whitened and X_whitened must be provided.")
+    return(FALSE)
+  }
+  if (!is.matrix(Y_whitened) || !is.numeric(Y_whitened)) {
+    warning("Y_whitened must be a numeric matrix.")
+    return(FALSE)
+  }
+  if (!is.matrix(X_whitened) || !is.numeric(X_whitened)) {
+    warning("X_whitened must be a numeric matrix.")
+    return(FALSE)
+  }
+  if (nrow(Y_whitened) != nrow(X_whitened)) {
+    warning("Y_whitened and X_whitened must have the same number of rows (timepoints).")
+    return(FALSE)
+  }
+
+  if (!is.null(weights)) {
+    if (is.matrix(weights)) {
+      if (!is.numeric(weights) || nrow(weights) != nrow(Y_whitened) ||
+          ncol(weights) != ncol(Y_whitened)) {
+        warning("weights matrix must match dimensions of Y_whitened")
+        return(FALSE)
+      }
+      if (any(!is.finite(as.vector(weights))) || any(as.vector(weights) < 0)) {
+        warning("weights must contain non-negative finite numbers")
+        return(FALSE)
+      }
+    } else if (is.numeric(weights) && is.vector(weights)) {
+      if (length(weights) != nrow(Y_whitened)) {
+        warning("weights vector length must equal number of rows in Y_whitened")
+        return(FALSE)
+      }
+      if (any(!is.finite(weights)) || any(weights < 0)) {
+        warning("weights must contain non-negative finite numbers")
+        return(FALSE)
+      }
+    } else {
+      warning("weights must be a numeric vector or matrix")
+      return(FALSE)
+    }
+  }
+
+  if (use_penalty_matrix) {
+    if (!is.null(K_penalty_mat)) {
+      if (!is.matrix(K_penalty_mat) ||
+          nrow(K_penalty_mat) != ncol(X_whitened) ||
+          ncol(K_penalty_mat) != ncol(X_whitened)) {
+        warning("K_penalty_mat must be a square matrix with dimension equal to ncol(X_whitened).")
+        return(FALSE)
+      }
+    } else {
+      if (is.null(projection_mats) || length(lambda_values) == 0) {
+        warning("Either K_penalty_mat or projection_mats and lambda_values must be provided when use_penalty_matrix = TRUE.")
+        return(FALSE)
+      }
+      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
+        warning("projection_mats must contain at least P_Signal.")
+        return(FALSE)
+      }
+    }
+  } else {
+    if (!is.null(K_penalty_diag)) {
+      if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
+        warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
+        return(FALSE)
+      }
+      if (any(K_penalty_diag < 0)) {
+        warning("All elements of K_penalty_diag must be non-negative.")
+        return(FALSE)
+      }
+    } else {
+      if (is.null(projection_mats) || length(lambda_values) == 0) {
+        warning("Either K_penalty_diag or projection_mats and lambda_values must be provided.")
+        return(FALSE)
+      }
+      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
+        warning("projection_mats must contain at least P_Signal.")
+        return(FALSE)
+      }
+    }
+  }
+  TRUE
+}
+
+#' Apply NA Mask and Weights
+#'
+#' Removes rows indicated by `na_mask` and subsets `weights` accordingly.
+#'
+#' @keywords internal
+apply_na_mask_and_weights <- function(Y, X, na_mask = NULL, weights = NULL) {
+  if (!is.null(na_mask)) {
+    if (!is.logical(na_mask) || length(na_mask) != nrow(Y)) {
+      warning("na_mask must be a logical vector with length equal to nrow(Y_whitened). Using all timepoints.")
+      Y_eff <- Y
+      X_eff <- X
+      W_eff <- if (is.null(weights)) NULL else weights
+    } else {
+      if (all(na_mask)) {
+        warning("All timepoints are masked by na_mask. Cannot solve ridge regression.")
+        return(NULL)
+      }
+      Y_eff <- Y[!na_mask, , drop = FALSE]
+      X_eff <- X[!na_mask, , drop = FALSE]
+      if (!is.null(weights)) {
+        if (is.matrix(weights)) {
+          W_eff <- weights[!na_mask, , drop = FALSE]
+        } else {
+          W_eff <- weights[!na_mask]
+        }
+      } else {
+        W_eff <- NULL
+      }
+    }
+  } else {
+    Y_eff <- Y
+    X_eff <- X
+    W_eff <- if (is.null(weights)) NULL else weights
+  }
+
+  if (nrow(X_eff) == 0) {
+    warning("No timepoints remaining after NA removal (or initial input had 0 timepoints). Cannot solve.")
+    return(NULL)
+  }
+
+  if (nrow(X_eff) < ncol(X_eff)) {
+    warning(sprintf("Number of timepoints after NA removal (%d) is less than number of regressors (%d). Ridge solution might be unstable or not meaningful.",
+                    nrow(X_eff), ncol(X_eff)))
+  }
+
+  list(Y = Y_eff, X = X_eff, W = W_eff)
+}
+
+#' Construct Ridge Penalty
+#'
+#' Builds the penalty matrix or diagonal from projection matrices and lambda values.
+#'
+#' @keywords internal
+construct_penalty <- function(X_eff, Y_eff, K_penalty_diag = NULL,
+                              projection_mats = NULL, lambda_values = NULL,
+                              gcv_lambda = FALSE, res_var_scale = 1.0,
+                              lambda_grid = 10^seq(-2, 2, length.out = 5),
+                              K_penalty_mat = NULL, use_penalty_matrix = FALSE) {
+
+  if (use_penalty_matrix) {
+    if (is.null(K_penalty_mat)) {
+      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
+      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
+      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
+      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+
+      if (gcv_lambda) {
+        if (!is.null(projection_mats$P_Noise)) {
+          lambda_ratio <- lambda_signal / lambda_parallel
+          lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff,
+                                                          projection_mats$P_Noise,
+                                                          lambda_grid = lambda_grid * res_var_scale,
+                                                          lambda_ratio = lambda_ratio)
+          lambda_signal <- lambda_ratio * lambda_parallel
+        } else {
+          warning("gcv_lambda = TRUE but projection_mats$P_Noise is missing")
+        }
+      }
+
+      n_reg <- ncol(X_eff)
+      K_penalty_mat <- matrix(0, n_reg, n_reg)
+      if (!is.null(projection_mats$P_GD)) {
+        K_penalty_mat <- K_penalty_mat + lambda_gd * projection_mats$P_GD
+      }
+      if (!is.null(projection_mats$P_Unique)) {
+        K_penalty_mat <- K_penalty_mat + lambda_unique * projection_mats$P_Unique
+      }
+      if (!is.null(projection_mats$P_Noise)) {
+        K_penalty_mat <- K_penalty_mat + lambda_parallel * projection_mats$P_Noise
+      }
+      if (!is.null(projection_mats$P_Signal)) {
+        K_penalty_mat <- K_penalty_mat + lambda_signal * projection_mats$P_Signal
+      }
+    }
+    list(K_penalty_diag = NULL, K_penalty_mat = K_penalty_mat)
+  } else {
+    if (is.null(K_penalty_diag)) {
+      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
+      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
+      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
+      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
+
+      if (gcv_lambda) {
+        if (!is.null(projection_mats$P_Noise)) {
+          lambda_ratio <- lambda_signal / lambda_parallel
+          lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff,
+                                                          projection_mats$P_Noise,
+                                                          lambda_grid = lambda_grid * res_var_scale,
+                                                          lambda_ratio = lambda_ratio)
+          lambda_signal <- lambda_ratio * lambda_parallel
+        } else {
+          warning("gcv_lambda = TRUE but projection_mats$P_Noise is missing")
+        }
+      }
+
+      n_reg <- ncol(X_eff)
+      K_penalty_diag <- rep(0, n_reg)
+      if (!is.null(projection_mats$P_GD)) {
+        K_penalty_diag <- K_penalty_diag + lambda_gd * diag(projection_mats$P_GD)
+      }
+      if (!is.null(projection_mats$P_Unique)) {
+        K_penalty_diag <- K_penalty_diag + lambda_unique * diag(projection_mats$P_Unique)
+      }
+      if (!is.null(projection_mats$P_Noise)) {
+        K_penalty_diag <- K_penalty_diag + lambda_parallel * diag(projection_mats$P_Noise)
+      }
+      if (!is.null(projection_mats$P_Signal)) {
+        K_penalty_diag <- K_penalty_diag + lambda_signal * diag(projection_mats$P_Signal)
+      }
+    }
+    list(K_penalty_diag = K_penalty_diag, K_penalty_mat = NULL)
+  }
+}
+
+#' Solve Weighted Ridge System
+#'
+#' Internal helper performing the Cholesky solve for anisotropic ridge.
+#'
+#' @keywords internal
+solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
+                                 K_penalty_mat = NULL, W_eff = NULL,
+                                 use_penalty_matrix = FALSE,
+                                 x_names = NULL, y_names = NULL) {
+
+  col_vars <- matrixStats::colVars(X_eff, na.rm = TRUE)
+  diag_pen <- if (use_penalty_matrix) diag(K_penalty_mat) else K_penalty_diag
+  if (any(col_vars < .Machine$double.eps^0.5 &
+          diag_pen[which(col_vars < .Machine$double.eps^0.5)] < .Machine$double.eps^0.5)) {
+    warning("One or more regressors in X_eff have near-zero variance AND near-zero penalty. Solution may be unstable.")
+  } else if (any(col_vars < .Machine$double.eps^0.5)) {
+    warning("One or more regressors in X_eff have near-zero variance (but may be stabilized by penalty).")
+  }
+
+  if (is.null(W_eff)) {
+    XtX <- crossprod(X_eff)
+    XtY <- crossprod(X_eff, Y_eff)
+  } else if (is.matrix(W_eff)) {
+    betas <- matrix(NA_real_, ncol = ncol(Y_eff), nrow = ncol(X_eff))
+    for (v in seq_len(ncol(Y_eff))) {
+      w_sqrt <- sqrt(W_eff[, v])
+      Xw <- X_eff * w_sqrt
+      Yw <- Y_eff[, v] * w_sqrt
+      XtX <- crossprod(Xw)
+      XtY <- crossprod(Xw, Yw)
+
+      if (use_penalty_matrix) {
+        K_mat_safe <- K_penalty_mat
+        diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
+        XtX_penalized <- XtX + K_mat_safe
+      } else {
+        safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
+        XtX_penalized <- XtX
+        diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+      }
+
+      b <- tryCatch({
+        chol_decomp <- chol(XtX_penalized)
+        chol2inv(chol_decomp) %*% XtY
+      }, error = function(e) NULL)
+      if (!is.null(b)) betas[, v] <- b
+    }
+    if (!is.null(x_names)) rownames(betas) <- x_names
+    if (!is.null(y_names)) colnames(betas) <- y_names
+    return(betas)
+  } else {
+    w_sqrt <- sqrt(W_eff)
+    Xw <- X_eff * w_sqrt
+    Yw <- Y_eff * w_sqrt
+    XtX <- crossprod(Xw)
+    XtY <- crossprod(Xw, Yw)
+  }
+
+  if (ncol(X_eff) == 0) {
+    warning("X_eff has zero columns after NA removal. Cannot solve.")
+    return(NULL)
+  }
+
+  if (use_penalty_matrix) {
+    K_mat_safe <- K_penalty_mat
+    diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
+    XtX_penalized <- XtX + K_mat_safe
+  } else {
+    safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
+    XtX_penalized <- XtX
+    diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
+  }
+
+  betas <- NULL
+  tryCatch({
+    chol_decomp <- chol(XtX_penalized)
+    betas <- chol2inv(chol_decomp) %*% XtY
+  }, error = function(e) {
+    warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
+    betas <<- NULL
+  })
+
+  if (is.null(betas)) {
+    return(NULL)
+  }
+
+  if (!is.null(x_names)) rownames(betas) <- x_names
+  if (!is.null(y_names)) colnames(betas) <- y_names
+
+  betas
+}
+
 
 
 #' Solve Anisotropic Ridge Regression Problem
@@ -192,289 +514,32 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
                                         K_penalty_mat = NULL,
                                         use_penalty_matrix = FALSE) {
 
-  # --- Input Validation ---
-  if (is.null(Y_whitened) || is.null(X_whitened)){
-    warning("Y_whitened and X_whitened must be provided.")
+  if (!validate_ridge_inputs(Y_whitened, X_whitened, K_penalty_diag, na_mask,
+                             projection_mats, lambda_values, weights,
+                             K_penalty_mat, use_penalty_matrix)) {
     return(NULL)
   }
-  if (!is.matrix(Y_whitened) || !is.numeric(Y_whitened)) {
-    warning("Y_whitened must be a numeric matrix.")
-    return(NULL)
-  }
-  if (!is.matrix(X_whitened) || !is.numeric(X_whitened)) {
-    warning("X_whitened must be a numeric matrix.")
-    return(NULL)
-  }
-  if (nrow(Y_whitened) != nrow(X_whitened)) {
-    warning("Y_whitened and X_whitened must have the same number of rows (timepoints).")
-    return(NULL)
-  }
-  if (!is.null(weights)) {
-    if (is.matrix(weights)) {
-      if (!is.numeric(weights) || nrow(weights) != nrow(Y_whitened) ||
-          ncol(weights) != ncol(Y_whitened)) {
-        warning("weights matrix must match dimensions of Y_whitened")
-        return(NULL)
-      }
-      if (any(!is.finite(as.vector(weights))) || any(as.vector(weights) < 0)) {
-        warning("weights must contain non-negative finite numbers")
-        return(NULL)
-      }
-    } else if (is.numeric(weights) && is.vector(weights)) {
-      if (length(weights) != nrow(Y_whitened)) {
-        warning("weights vector length must equal number of rows in Y_whitened")
-        return(NULL)
-      }
-      if (any(!is.finite(weights)) || any(weights < 0)) {
-        warning("weights must contain non-negative finite numbers")
-        return(NULL)
-      }
-    } else {
-      warning("weights must be a numeric vector or matrix")
-      return(NULL)
-    }
-  }
-  if (use_penalty_matrix) {
-    if (!is.null(K_penalty_mat)) {
-      if (!is.matrix(K_penalty_mat) ||
-          nrow(K_penalty_mat) != ncol(X_whitened) ||
-          ncol(K_penalty_mat) != ncol(X_whitened)) {
-        warning("K_penalty_mat must be a square matrix with dimension equal to ncol(X_whitened).")
-        return(NULL)
-      }
-    } else {
-      if (is.null(projection_mats) || length(lambda_values) == 0) {
-        warning("Either K_penalty_mat or projection_mats and lambda_values must be provided when use_penalty_matrix = TRUE.")
-        return(NULL)
-      }
-      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
-        warning("projection_mats must contain at least P_Signal.")
-        return(NULL)
-      }
-    }
-  } else {
-    if (!is.null(K_penalty_diag)) {
-      if (!is.numeric(K_penalty_diag) || length(K_penalty_diag) != ncol(X_whitened)) {
-        warning("K_penalty_diag must be a numeric vector with length equal to ncol(X_whitened).")
-        return(NULL)
-      }
-      if (any(K_penalty_diag < 0)) {
-        warning("All elements of K_penalty_diag must be non-negative.")
-        return(NULL)
-      }
-    } else {
-      if (is.null(projection_mats) || length(lambda_values) == 0) {
-        warning("Either K_penalty_diag or projection_mats and lambda_values must be provided.")
-        return(NULL)
-      }
-      if (!is.list(projection_mats) || is.null(projection_mats$P_Signal)) {
-        warning("projection_mats must contain at least P_Signal.")
-        return(NULL)
-      }
-    }
-  }
 
-  # --- Handle NAs ---
-  if (!is.null(na_mask)) {
-    if (!is.logical(na_mask) || length(na_mask) != nrow(Y_whitened)) {
-      warning("na_mask must be a logical vector with length equal to nrow(Y_whitened). Using all timepoints.")
-      Y_eff <- Y_whitened
-      X_eff <- X_whitened
-      W_eff <- if (is.null(weights)) NULL else weights
-    } else {
-      if (all(na_mask)) {
-        warning("All timepoints are masked by na_mask. Cannot solve ridge regression.")
-        return(NULL)
-      }
-      Y_eff <- Y_whitened[!na_mask, , drop = FALSE]
-      X_eff <- X_whitened[!na_mask, , drop = FALSE]
-      if (!is.null(weights)) {
-        if (is.matrix(weights)) {
-          W_eff <- weights[!na_mask, , drop = FALSE]
-        } else {
-          W_eff <- weights[!na_mask]
-        }
-      } else {
-        W_eff <- NULL
-      }
-    }
-  } else {
-    Y_eff <- Y_whitened
-    X_eff <- X_whitened
-    W_eff <- if (is.null(weights)) NULL else weights
-  }
+  na_res <- apply_na_mask_and_weights(Y_whitened, X_whitened, na_mask, weights)
+  if (is.null(na_res)) return(NULL)
+  Y_eff <- na_res$Y
+  X_eff <- na_res$X
+  W_eff <- na_res$W
 
-  if (nrow(X_eff) == 0) {
-    warning("No timepoints remaining after NA removal (or initial input had 0 timepoints). Cannot solve.")
-    return(NULL)
-  }
-  if (nrow(X_eff) < ncol(X_eff)) {
-    warning(sprintf("Number of timepoints after NA removal (%d) is less than number of regressors (%d). Ridge solution might be unstable or not meaningful.", 
-                    nrow(X_eff), ncol(X_eff)))
-    # Proceeding, as ridge can handle p > n
-  }
+  pen <- construct_penalty(X_eff, Y_eff, K_penalty_diag,
+                           projection_mats, lambda_values,
+                           gcv_lambda, res_var_scale, lambda_grid,
+                           K_penalty_mat, use_penalty_matrix)
+  K_penalty_diag <- pen$K_penalty_diag
+  K_penalty_mat  <- pen$K_penalty_mat
 
-  if (use_penalty_matrix) {
-    if (is.null(K_penalty_mat)) {
-      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
-      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
-      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
-      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
-
-      if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
-        lambda_ratio <- lambda_signal / lambda_parallel
-        lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
-                                                        lambda_grid = lambda_grid * res_var_scale,
-                                                        lambda_ratio = lambda_ratio)
-        lambda_signal <- lambda_ratio * lambda_parallel
-      }
-
-      n_reg <- ncol(X_eff)
-      K_penalty_mat <- matrix(0, n_reg, n_reg)
-      if (!is.null(projection_mats$P_GD)) {
-        K_penalty_mat <- K_penalty_mat + lambda_gd * projection_mats$P_GD
-      }
-      if (!is.null(projection_mats$P_Unique)) {
-        K_penalty_mat <- K_penalty_mat + lambda_unique * projection_mats$P_Unique
-      }
-      if (!is.null(projection_mats$P_Noise)) {
-        K_penalty_mat <- K_penalty_mat + lambda_parallel * projection_mats$P_Noise
-      }
-      if (!is.null(projection_mats$P_Signal)) {
-        K_penalty_mat <- K_penalty_mat + lambda_signal * projection_mats$P_Signal
-      }
-    }
-  } else {
-    if (is.null(K_penalty_diag)) {
-      lambda_parallel <- lambda_values$lambda_parallel %||% 1.0
-      lambda_signal   <- lambda_values$lambda_perp_signal %||% (0.05 * lambda_parallel)
-      lambda_gd       <- lambda_values$lambda_gd %||% lambda_parallel
-      lambda_unique   <- lambda_values$lambda_unique %||% lambda_parallel
-
-      if (gcv_lambda && !is.null(projection_mats$P_Noise)) {
-        lambda_ratio <- lambda_signal / lambda_parallel
-        lambda_parallel <- ndx_gcv_tune_lambda_parallel(Y_eff, X_eff, projection_mats$P_Noise,
-                                                        lambda_grid = lambda_grid * res_var_scale,
-                                                        lambda_ratio = lambda_ratio)
-        lambda_signal <- lambda_ratio * lambda_parallel
-      }
-
-      n_reg <- ncol(X_eff)
-      K_penalty_diag <- rep(0, n_reg)
-      if (!is.null(projection_mats$P_GD)) {
-        K_penalty_diag <- K_penalty_diag + lambda_gd * diag(projection_mats$P_GD)
-      }
-      if (!is.null(projection_mats$P_Unique)) {
-        K_penalty_diag <- K_penalty_diag + lambda_unique * diag(projection_mats$P_Unique)
-      }
-      if (!is.null(projection_mats$P_Noise)) {
-        K_penalty_diag <- K_penalty_diag + lambda_parallel * diag(projection_mats$P_Noise)
-      }
-      if (!is.null(projection_mats$P_Signal)) {
-        K_penalty_diag <- K_penalty_diag + lambda_signal * diag(projection_mats$P_Signal)
-      }
-    }
-  }
-  
-  # --- Solve Ridge Regression ---
-  col_vars <- matrixStats::colVars(X_eff, na.rm = TRUE)
-  diag_pen <- if (use_penalty_matrix) diag(K_penalty_mat) else K_penalty_diag
-  if (any(col_vars < .Machine$double.eps^0.5 & diag_pen[which(col_vars < .Machine$double.eps^0.5)] < .Machine$double.eps^0.5 )) {
-      warning("One or more regressors in X_eff have near-zero variance AND near-zero penalty. Solution may be unstable.")
-  } else if (any(col_vars < .Machine$double.eps^0.5)) {
-      warning("One or more regressors in X_eff have near-zero variance (but may be stabilized by penalty).")
-  }
-
-  if (is.null(W_eff)) {
-    XtX <- crossprod(X_eff)
-    XtY <- crossprod(X_eff, Y_eff)
-  } else if (is.matrix(W_eff)) {
-    betas <- matrix(NA_real_, ncol = ncol(Y_eff), nrow = ncol(X_eff))
-    for (v in seq_len(ncol(Y_eff))) {
-      w_sqrt <- sqrt(W_eff[, v])
-      Xw <- X_eff * w_sqrt
-      Yw <- Y_eff[, v] * w_sqrt
-      XtX <- crossprod(Xw)
-      XtY <- crossprod(Xw, Yw)
-
-      if (use_penalty_matrix) {
-        K_mat_safe <- K_penalty_mat
-        diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
-        XtX_penalized <- XtX + K_mat_safe
-      } else {
-        safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
-        XtX_penalized <- XtX
-        diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
-      }
-
-      b <- tryCatch({
-        chol_decomp <- chol(XtX_penalized)
-        chol2inv(chol_decomp) %*% XtY
-      }, error = function(e) NULL)
-      if (!is.null(b)) betas[, v] <- b
-    }
-    if (is.null(colnames(X_whitened))) rownames(betas) <- NULL else rownames(betas) <- colnames(X_whitened)
-    if (!is.null(colnames(Y_whitened))) colnames(betas) <- colnames(Y_whitened)
-    return(betas)
-  } else {
-    w_sqrt <- sqrt(W_eff)
-    Xw <- X_eff * w_sqrt
-    Yw <- Y_eff * w_sqrt
-    XtX <- crossprod(Xw)
-    XtY <- crossprod(Xw, Yw)
-  }
-  
-  if (ncol(X_eff) == 0) { 
-      warning("X_eff has zero columns after NA removal. Cannot solve.")
-      return(NULL)
-  }
-  
-  # Add penalty matrix to XtX
-  if (use_penalty_matrix) {
-    K_mat_safe <- K_penalty_mat
-    diag(K_mat_safe) <- pmax(diag(K_mat_safe), .Machine$double.eps)
-    XtX_penalized <- XtX + K_mat_safe
-  } else {
-    safe_K_penalty_diag <- pmax(K_penalty_diag, .Machine$double.eps)
-    XtX_penalized <- XtX
-    diag(XtX_penalized) <- diag(XtX_penalized) + safe_K_penalty_diag
-  }
-  
-  betas <- NULL
-  tryCatch({
-    # Using Cholesky decomposition: beta = (X'X + K)^-1 X'Y = chol2inv(chol(X'X + K)) X'Y
-    chol_decomp <- chol(XtX_penalized)
-    betas <- chol2inv(chol_decomp) %*% XtY
-  }, error = function(e) {
-    warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
-    # Fallback to generalized inverse if Cholesky fails (e.g. not perfectly PD despite epsilon)
-    # This is less ideal as it doesn't guarantee the ridge shrinkage as intended.
-    # K_matrix <- diag(safe_K_penalty_diag, nrow = ncol(X_eff), ncol = ncol(X_eff))
-    # tryCatch({
-    #   betas <<- MASS::ginv(XtX + K_matrix) %*% XtY
-    #   warning("Cholesky solve failed, used MASS::ginv as fallback.")
-    # }, error = function(e2) {
-    #   warning(paste("Solving ridge regression failed (MASS::ginv fallback also failed):", e2$message))
-    #   betas <<- NULL
-    # })
-    betas <<- NULL # Keep it simple: if chol fails, we fail for now.
-  })
-  
-  if (is.null(betas)) {
-    # Consider returning matrix of NAs of appropriate size for type stability if preferred downstream
-    # For now, consistent with other NULL returns on failure.
-    return(NULL)
-  }
-  
-  # Ensure output has correct row/col names if X_whitened had them
-  if (!is.null(colnames(X_whitened))) {
-    rownames(betas) <- colnames(X_whitened)
-  }
-  if (!is.null(colnames(Y_whitened))) {
-    colnames(betas) <- colnames(Y_whitened)
-  }
-  
-  return(betas)
+  solve_weighted_ridge(Y_eff, X_eff,
+                       K_penalty_diag = K_penalty_diag,
+                       K_penalty_mat = K_penalty_mat,
+                       W_eff = W_eff,
+                       use_penalty_matrix = use_penalty_matrix,
+                       x_names = colnames(X_whitened),
+                       y_names = colnames(Y_whitened))
 }
 
 #' Extract Task-Related Beta Coefficients
