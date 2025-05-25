@@ -342,4 +342,4 @@ ndx_build_design_matrix <- function(estimated_hrfs,
     }
   }
   return(X_combined)
-} 
+}
