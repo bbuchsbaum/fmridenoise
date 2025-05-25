@@ -46,6 +46,16 @@ ndx_generate_html_report <- function(workflow_output,
   # ---- Residual PSD plot ----
   psd_png <- file.path(output_dir, "residual_psd.png")
   if (!is.null(workflow_output$Y_residuals_final_unwhitened)) {
+    if (nrow(pass0_residuals) != nrow(workflow_output$Y_residuals_final_unwhitened)) {
+      stop(
+        sprintf(
+          "Mismatch in residual lengths: pass0_residuals has %d rows, \
+workflow_output$Y_residuals_final_unwhitened has %d rows",
+          nrow(pass0_residuals),
+          nrow(workflow_output$Y_residuals_final_unwhitened)
+        )
+      )
+    }
     res0_mean <- rowMeans(pass0_residuals, na.rm = TRUE)
     res_final_mean <- rowMeans(workflow_output$Y_residuals_final_unwhitened, na.rm = TRUE)
     psd0 <- psd::pspectrum(res0_mean, x.frqsamp = 1/TR, plot = FALSE)
