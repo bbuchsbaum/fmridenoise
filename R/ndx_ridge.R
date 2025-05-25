@@ -58,19 +58,25 @@ ndx_gcv_tune_lambda_parallel <- function(Y_whitened, X_whitened, P_Noise,
   }
   best_lambda <- lambda_grid[1]
   best_gcv <- Inf
+  XtX <- crossprod(X_whitened)
+  XtY <- crossprod(X_whitened, Y_whitened)
+  base_diag <- diag(XtX)
+  XtX_pen <- XtX
   for (lam in lambda_grid) {
     K_diag <- lam * diag_noise + (lam * lambda_ratio) * diag(P_Signal)
-    XtX <- crossprod(X_whitened)
-    XtX_pen <- XtX
-    diag(XtX_pen) <- diag(XtX_pen) + pmax(K_diag, .Machine$double.eps)
+    diag(XtX_pen) <- base_diag + pmax(K_diag, .Machine$double.eps)
     chol_decomp <- tryCatch(chol(XtX_pen), error = function(e) NULL)
     if (is.null(chol_decomp)) next
-    beta_hat <- chol2inv(chol_decomp) %*% crossprod(X_whitened, Y_whitened)
+    beta_hat <- chol2inv(chol_decomp) %*% XtY
     residuals <- Y_whitened - X_whitened %*% beta_hat
     sse <- sum(residuals^2)
     S_mat <- X_whitened %*% chol2inv(chol_decomp) %*% t(X_whitened)
     edf <- sum(diag(S_mat))
-    gcv <- sse / (n - edf)^2
+    if ((n - edf) <= .Machine$double.eps) {
+      gcv <- Inf
+    } else {
+      gcv <- sse / (n - edf)^2
+    }
     if (is.finite(gcv) && gcv < best_gcv) {
       best_gcv <- gcv
       best_lambda <- lam
@@ -206,9 +212,17 @@ ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag =
         warning("weights matrix must match dimensions of Y_whitened")
         return(NULL)
       }
+      if (any(!is.finite(as.vector(weights))) || any(as.vector(weights) < 0)) {
+        warning("weights must contain non-negative finite numbers")
+        return(NULL)
+      }
     } else if (is.numeric(weights) && is.vector(weights)) {
       if (length(weights) != nrow(Y_whitened)) {
         warning("weights vector length must equal number of rows in Y_whitened")
+        return(NULL)
+      }
+      if (any(!is.finite(weights)) || any(weights < 0)) {
+        warning("weights must contain non-negative finite numbers")
         return(NULL)
       }
     } else {
