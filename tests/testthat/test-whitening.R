@@ -249,3 +249,21 @@ test_that("ndx_ar2_whitening handles precision weights", {
   expect_equal(res_w$AR_coeffs_voxelwise, res_unw$AR_coeffs_voxelwise, tolerance = 0.05,
                label = "AR coeffs with unit weights should be close to unweighted AR coeffs (ar.yw vs lm.wfit)")
 })
+
+test_that("global_ar_stat options mitigate influence of extreme voxels", {
+  set.seed(54321)
+  n_timepoints <- 150
+  ar_order <- 2
+  typical_coeffs <- c(0.5, -0.2)
+  n_typ <- 8
+  n_out <- 2
+  typ_data <- replicate(n_typ, .generate_ar_data(n_timepoints, typical_coeffs, 1.0)$series)
+  out_data <- replicate(n_out, .generate_ar_data(n_timepoints, c(0.9, 0.8), 1.0)$series)
+  Y <- cbind(typ_data, out_data)
+  X <- matrix(rnorm(n_timepoints * 2), n_timepoints, 2)
+  res_mean <- ndx_ar2_whitening(Y, X, Y, order = ar_order, verbose = FALSE, global_ar_stat = "mean")
+  res_median <- ndx_ar2_whitening(Y, X, Y, order = ar_order, verbose = FALSE, global_ar_stat = "median")
+  dist_mean <- sum(abs(res_mean$AR_coeffs_global - typical_coeffs))
+  dist_median <- sum(abs(res_median$AR_coeffs_global - typical_coeffs))
+  expect_lt(dist_median, dist_mean, label = "Median summary should reduce influence of outliers")
+})

@@ -18,6 +18,10 @@
 #' @param weights Optional numeric matrix of weights (timepoints x voxels) used
 #'   for weighted AR coefficient estimation. If NULL, unweighted estimation is
 #'   performed.
+#' @param global_ar_stat Character string specifying how to summarize voxel-wise
+#'   AR coefficients when computing the global filter for `X_design_full`.
+#'   Options are "mean" (default), "median", or "trimmed_mean" (10% trimmed
+#'   mean).
 #'
 #' @return A list containing:
 #'   - `Y_whitened`: The AR(order)-whitened fMRI data (timepoints x voxels).
@@ -47,7 +51,8 @@
 #' @export
 ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
                               order = 2L, global_ar_on_design = TRUE,
-                              verbose = TRUE, weights = NULL) {
+                              verbose = TRUE, weights = NULL,
+                              global_ar_stat = c("mean", "median", "trimmed_mean")) {
 
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {
     stop("Y_data must be a numeric matrix.")
@@ -68,6 +73,7 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     stop("order must be a single positive integer.")
   }
   order <- as.integer(order)
+  global_ar_stat <- match.arg(global_ar_stat)
 
   n_timepoints <- nrow(Y_data)
   n_voxels <- ncol(Y_data)
@@ -169,7 +175,10 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     valid_coeffs_for_global_avg <- AR_coeffs_voxelwise[rowSums(AR_coeffs_voxelwise != 0) > 0 & !is.na(var_innovations_voxelwise), , drop = FALSE]
 
     if (nrow(valid_coeffs_for_global_avg) > 0) {
-      AR_coeffs_global <- colMeans(valid_coeffs_for_global_avg, na.rm = TRUE)
+      AR_coeffs_global <- switch(global_ar_stat,
+                                 mean = colMeans(valid_coeffs_for_global_avg, na.rm = TRUE),
+                                 median = apply(valid_coeffs_for_global_avg, 2, stats::median, na.rm = TRUE),
+                                 trimmed_mean = apply(valid_coeffs_for_global_avg, 2, mean, trim = 0.1, na.rm = TRUE))
       if(any(is.na(AR_coeffs_global))) {
           warning("Global AR coefficients for design matrix contained NAs after averaging. Design matrix will not be whitened.")
           X_whitened <- X_design_full
