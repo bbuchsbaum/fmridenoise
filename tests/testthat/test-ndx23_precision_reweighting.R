@@ -37,11 +37,11 @@ test_that("S-based precision weights improve robustness to spikes", {
   K_diag <- rep(0.1, ncol(X))
   betas_unw <- ndx_solve_anisotropic_ridge(res_unw$Y_whitened, X,
                                            K_penalty_diag = K_diag,
-                                           na_mask = res_unw$na_mask)
+                                           na_mask = res_unw$na_mask)$betas
   betas_w <- ndx_solve_anisotropic_ridge(res_w$Y_whitened, X,
                                          K_penalty_diag = K_diag,
                                          na_mask = res_w$na_mask,
-                                         weights = weights_mat)
+                                         weights = weights_mat)$betas
   diff_unw <- sum(abs(betas_unw[, 1] - beta_true))
   diff_w <- sum(abs(betas_w[, 1] - beta_true))
   expect_lte(diff_w, diff_unw + 0.2)

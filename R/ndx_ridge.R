@@ -384,6 +384,7 @@ construct_penalty <- function(X_eff, Y_eff, K_penalty_diag = NULL,
 #' Internal helper performing the Cholesky solve for anisotropic ridge.
 #'
 #' @keywords internal
+#' @return List with elements `betas` and `chol_RtR` (NULL when weights are a matrix).
 solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
                                  K_penalty_mat = NULL, W_eff = NULL,
                                  use_penalty_matrix = FALSE,
@@ -428,7 +429,7 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
     }
     if (!is.null(x_names)) rownames(betas) <- x_names
     if (!is.null(y_names)) colnames(betas) <- y_names
-    return(betas)
+    return(list(betas = betas, chol_RtR = NULL))
   } else {
     w_sqrt <- sqrt(W_eff)
     Xw <- X_eff * w_sqrt
@@ -453,12 +454,14 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
   }
 
   betas <- NULL
+  chol_decomp <- NULL
   tryCatch({
     chol_decomp <- chol(XtX_penalized)
     betas <- chol2inv(chol_decomp) %*% XtY
   }, error = function(e) {
     warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
     betas <<- NULL
+    chol_decomp <<- NULL
   })
 
   if (is.null(betas)) {
@@ -468,7 +471,7 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
   if (!is.null(x_names)) rownames(betas) <- x_names
   if (!is.null(y_names)) colnames(betas) <- y_names
 
-  betas
+  list(betas = betas, chol_RtR = chol_decomp)
 }
 
 
@@ -509,7 +512,11 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
 #'   lambda search grid when `gcv_lambda` is TRUE.
 #' @param lambda_grid Numeric vector of candidate lambda values for GCV when
 #'   `gcv_lambda` is TRUE. Defaults to `10^seq(-2, 2, length.out = 5)`.
-#' @return A matrix of estimated beta coefficients (n_regressors x voxels/responses).
+#' @return A list with elements:
+#'   \describe{
+#'     \item{betas}{Matrix of estimated coefficients (n_regressors x voxels).}
+#'     \item{chol_RtR}{Cholesky factor of the penalized normal equations. NULL when weights are a matrix.}
+#'   }
 #'   Returns NULL if inputs are invalid or the problem cannot be solved.
 #' @export ndx_solve_anisotropic_ridge
 ndx_solve_anisotropic_ridge <- function(Y_whitened, X_whitened, K_penalty_diag = NULL,

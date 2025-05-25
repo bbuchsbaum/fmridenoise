@@ -20,12 +20,12 @@ test_that("projection-based penalties equal explicit penalties", {
 
   betas_proj <- ndx_solve_anisotropic_ridge(data$Y, data$X,
                                            projection_mats = proj,
-                                           lambda_values = lambda_vals)
+                                           lambda_values = lambda_vals)$betas
 
   K_diag <- c(rep(lambda_vals$lambda_parallel,2),
               rep(lambda_vals$lambda_perp_signal,2))
   betas_diag <- ndx_solve_anisotropic_ridge(data$Y, data$X,
-                                            K_penalty_diag = K_diag)
+                                            K_penalty_diag = K_diag)$betas
 
   dimnames(betas_proj) <- NULL
   dimnames(betas_diag) <- NULL
@@ -46,10 +46,10 @@ test_that("anisotropic penalties preserve signal while shrinking noise", {
 
   betas_aniso <- ndx_solve_anisotropic_ridge(data$Y, data$X,
                                             projection_mats = proj,
-                                            lambda_values = lambda_vals)
+                                            lambda_values = lambda_vals)$betas
   K_diag_iso <- rep(lambda_vals$lambda_parallel, 2)
   betas_iso <- ndx_solve_anisotropic_ridge(data$Y, data$X,
-                                           K_penalty_diag = K_diag_iso)
+                                           K_penalty_diag = K_diag_iso)$betas
 
   error_aniso <- abs(betas_aniso[2,1] - betas_true[2,1])
   error_iso <- abs(betas_iso[2,1] - betas_true[2,1])

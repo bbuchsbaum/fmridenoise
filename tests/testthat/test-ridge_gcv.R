@@ -14,7 +14,7 @@ test_that("ndx_solve_anisotropic_ridge performs GCV tuning", {
     projection_mats = proj,
     lambda_values = list(lambda_parallel = 1, lambda_perp_signal = 0.1),
     gcv_lambda = TRUE,
-    res_var_scale = res_var)
+    res_var_scale = res_var)$betas
   expect_equal(dim(betas), c(2,1))
 })
 
@@ -30,7 +30,7 @@ test_that("warning when gcv_lambda TRUE but P_Noise missing", {
       res_var_scale = res_var),
     "gcv_lambda = TRUE but projection_mats$P_Noise is missing", fixed = TRUE
   )
-  expect_equal(dim(betas), c(2,1))
+  expect_equal(dim(betas$betas), c(2,1))
 })
 
 test_that("ndx_gcv_tune_lambda_parallel handles NULL P_Noise", {
