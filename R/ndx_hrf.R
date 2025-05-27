@@ -708,6 +708,13 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
   fold_ids <- rep(seq_len(k_eff), length.out = length(unique_blocks))
   names(fold_ids) <- unique_blocks
 
+  # Precompute train/test indices for each fold
+  fold_indices <- lapply(seq_len(k_eff), function(fold) {
+    test_blocks <- unique_blocks[fold_ids == fold]
+    list(train = !(block_ids %in% test_blocks),
+         test  =  (block_ids %in% test_blocks))
+  })
+
   build_D <- function(p) {
     if (p > 1) {
       diff(diag(p), differences = 1)
@@ -718,68 +725,66 @@ cv_fusedlasso <- function(y, X, lambda_grid, gamma_grid, k_folds, block_ids) {
 
   D <- build_D(ncol(X))
 
-  best_lambda <- lambda_grid[1]
-  best_gamma <- gamma_grid[1]
-  best_score <- Inf
+  param_grid <- expand.grid(lambda = lambda_grid, gamma = gamma_grid,
+                            KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
 
-  # Initialize matrix to store average MSE for each (lambda, gamma) pair
-  cv_error_matrix <- matrix(NA_real_, nrow = length(lambda_grid),
-                            ncol = length(gamma_grid),
-                            dimnames = list(NULL, NULL))
+  compute_score <- function(lam, gam) {
+    mse_folds <- sapply(fold_indices, function(idx) {
+      train_idx <- idx$train
+      test_idx  <- idx$test
+      if (sum(train_idx) == 0 || sum(test_idx) == 0) return(NA_real_)
 
-  for (i in seq_along(lambda_grid)) {
-    lam <- lambda_grid[i]
-    for (j in seq_along(gamma_grid)) {
-      gam <- gamma_grid[j]
+      fit <- tryCatch(
+        genlasso::fusedlasso(y[train_idx], X[train_idx, , drop = FALSE],
+                              D = D, gamma = gam),
+        error = function(e) NULL
+      )
+      if (is.null(fit)) return(NA_real_)
 
-      mse_folds <- c()
-      for (fold in seq_len(k_eff)) {
-        test_blocks <- unique_blocks[fold_ids == fold]
-        train_idx <- !(block_ids %in% test_blocks)
-        test_idx <- (block_ids %in% test_blocks)
-        if (sum(train_idx) == 0 || sum(test_idx) == 0) next
+      beta <- tryCatch(stats::coef(fit, lambda = lam)$beta,
+                       error = function(e) NULL)
+      if (is.null(beta)) return(NA_real_)
 
-        fit <- tryCatch(
-          genlasso::fusedlasso(y[train_idx], X[train_idx, , drop = FALSE], D = D, gamma = gam),
-          error = function(e) NULL
-        )
-        if (is.null(fit)) next
+      pred <- as.numeric(X[test_idx, , drop = FALSE] %*% beta)
+      mean((y[test_idx] - pred)^2)
+    })
 
-        beta <- tryCatch(stats::coef(fit, lambda = lam)$beta, error = function(e) NULL)
-        if (is.null(beta)) next
+    mse_folds <- mse_folds[!is.na(mse_folds)]
 
-        pred <- as.numeric(X[test_idx, , drop = FALSE] %*% beta)
-        mse_folds <- c(mse_folds, mean((y[test_idx] - pred)^2))
-      }
-
-      if (length(mse_folds) == 0) {
-        # Fallback: use training error on full data
-        fit <- tryCatch(
-          genlasso::fusedlasso(y, X, D = D, gamma = gam),
-          error = function(e) NULL
-        )
-        if (!is.null(fit)) {
-          beta <- tryCatch(stats::coef(fit, lambda = lam)$beta, error = function(e) NULL)
-          if (!is.null(beta)) {
-            pred <- as.numeric(X %*% beta)
-            mse_folds <- mean((y - pred)^2)
-          }
+    if (length(mse_folds) == 0) {
+      fit <- tryCatch(
+        genlasso::fusedlasso(y, X, D = D, gamma = gam),
+        error = function(e) NULL
+      )
+      if (!is.null(fit)) {
+        beta <- tryCatch(stats::coef(fit, lambda = lam)$beta,
+                         error = function(e) NULL)
+        if (!is.null(beta)) {
+          pred <- as.numeric(X %*% beta)
+          mse_folds <- mean((y - pred)^2)
+        } else {
+          mse_folds <- NA_real_
         }
       } else {
-        mse_folds <- mean(mse_folds)
+        mse_folds <- NA_real_
       }
-
-      cv_error_matrix[i, j] <- if (length(mse_folds) > 0) mse_folds else NA_real_
-
-      if (length(mse_folds) > 0 && is.finite(mse_folds) && mse_folds < best_score) {
-        best_score <- mse_folds
-        best_lambda <- lam
-        best_gamma <- gam
-      }
+    } else {
+      mse_folds <- mean(mse_folds)
     }
+
+    mse_folds
   }
 
-  list(best_lambda = best_lambda, best_gamma = best_gamma, cv_error_matrix = cv_error_matrix)
+  cv_scores <- mapply(compute_score, param_grid$lambda, param_grid$gamma)
+
+  cv_error_matrix <- matrix(cv_scores, nrow = length(lambda_grid),
+                            ncol = length(gamma_grid))
+
+  best_idx <- which.min(cv_scores)
+
+  list(best_lambda = param_grid$lambda[best_idx],
+       best_gamma  = param_grid$gamma[best_idx],
+       cv_error_matrix = cv_error_matrix)
 }
 
 #' @keywords internal
