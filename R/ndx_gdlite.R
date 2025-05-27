@@ -736,14 +736,10 @@ build_gdlite_design_matrix <- function(events, run_idx, TR,
     X_poly_intercepts <- matrix(0, nrow = n_timepoints, ncol = 0)
   } else if (poly_degree == 0) {
     # Special case: only run-specific intercepts (fmrireg::baseline_model doesn't accept degree=0)
-    # Create run-specific intercepts manually
-    n_runs <- length(unique(run_idx))
-    X_poly_intercepts <- matrix(0, nrow = n_timepoints, ncol = n_runs)
-    for (i in seq_along(unique(run_idx))) {
-      run_id <- unique(run_idx)[i]
-      X_poly_intercepts[run_idx == run_id, i] <- 1
-    }
-    colnames(X_poly_intercepts) <- paste0("run", unique(run_idx), "_intercept")
+    # Use model.matrix to generate run intercepts
+    unique_runs <- unique(run_idx)
+    X_poly_intercepts <- model.matrix(~0 + factor(run_idx, levels = unique_runs))
+    colnames(X_poly_intercepts) <- paste0("run", unique_runs, "_intercept")
   } else {
     # poly_degree >= 1: use fmrireg::baseline_model
     baseline_des <- fmrireg::baseline_model(
