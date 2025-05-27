@@ -358,68 +358,26 @@ cv_r2_loro <- function(Y_fmri, X_design, run_idx) {
     Y_pred_test <- X_test %*% betas_train
     residuals_test <- Y_test - Y_pred_test
 
-    # Calculate Sum of Squared Residuals (RSS) and Total Sum of Squares (TSS) for each voxel in the test set
-    for (v_idx in 1:n_voxels) {
-      y_v_test <- Y_test[, v_idx]
-      res_v_test <- residuals_test[, v_idx]
-      
-      # Ensure there are valid (non-NA) observations for this voxel in this test run
-      valid_obs_mask_v_test <- !is.na(y_v_test)
-      if (sum(valid_obs_mask_v_test) < 2) { # Need at least 2 points to calculate variance for TSS
-          next # Skip this voxel for this fold if not enough data
-      }
-      
-      y_v_test_valid <- y_v_test[valid_obs_mask_v_test]
-      res_v_test_valid <- res_v_test[valid_obs_mask_v_test]
-      
-      # If after NA removal for y, residuals are all NA (e.g. because betas_train[,v_idx] was NA)
-      if(all(is.na(res_v_test_valid))) {
-          next
-      }
+    # Determine voxels with enough non-NA observations
+    valid_counts <- colSums(!is.na(Y_test))
+    resid_counts <- colSums(!is.na(residuals_test))
+    vox_eligible <- valid_counts >= 2 & resid_counts > 0
 
-      current_rss_v_test <- sum(res_v_test_valid^2, na.rm = TRUE)
-      mean_y_v_test_valid <- mean(y_v_test_valid, na.rm = TRUE)
-      current_tss_v_test <- sum((y_v_test_valid - mean_y_v_test_valid)^2, na.rm = TRUE)
-      
-      # Accumulate (this is incorrect for LORO, R2 is per-fold, then assigned)
-      # For LORO, R2 for a voxel is computed *when its run is the test set*.
-      # So, we don't accumulate. We store these per-voxel for this specific left-out run.
-      # The final r2_cv_voxels will be populated such that r2_cv_voxels[v] is the R2 calculated when
-      # the run(s) containing voxel v data was part of Y_test.
-      # This needs rethinking: cv_r2_loro should return one R2 per voxel.
-      # The R2 for voxel `v` is the R2 obtained when *its own run* was the test data.
-      # The loop structure implies we are calculating R2 for ALL voxels using the current fold.
-      # This is fine, but how to store it? The R2 for voxel `v` belonging to run `R` is the one
-      # calculated when run `R` is `current_test_run`.
-      
-      # Let's re-initialize r2_cv_voxels inside the loop and assign to relevant voxels.
-      # This is still not quite right. The output must be one R2 per voxel.
-      # The standard way: for each voxel, its LORO R2 is the R2 obtained from the fold where its run was held out.
-      # Thus, after this loop, `r2_cv_values_for_voxels_in_test_run` is what we need for this subset of voxels.
-      
-      # Store for later: total sum of squares and residual sum of squares for *this specific test run data*
-      # This is what the GLMdenoise paper implies: R^2(v) = 1 - RSS_test(v) / TSS_test(v)
-      # where test is when run(v) is left out.
-      
-      # If current_tss_v_test is near zero, R2 is 0 (or undefined, treat as 0 for robustness)
-      if (abs(current_tss_v_test) < 1e-9) {
-        # R2 for this voxel in this fold is 0
-      } else {
-        # R2 for this voxel, for this fold (when its run was left out)
-        # sum_sq_residuals_test[v_idx] and sum_sq_total_test[v_idx] will be populated *only* for voxels in current_test_run
-        # This means we need to know which voxels belong to which runs if runs have different voxels (not typical)
-        # Assuming all voxels are present in all runs for now.
-        # The current loop calculates R2 for ALL voxels based on the test data of the CURRENT FOLD.
-        # This means for voxels in run `q` their `r2_cv` is taken from the fold where run `q` was left out.
-        
-        # This implies that for all voxels `v_idx`, when their run is the `current_test_run`,
-        # their `sum_sq_residuals_test[v_idx]` and `sum_sq_total_test[v_idx]` should be updated.
-        
-        # If a voxel `v_idx` is part of `current_test_run` (which all are, conceptually, as Y_test is [time_in_test_run x all_voxels])
-        # then update its specific RSS and TSS based on this fold where its run was tested.
-        sum_sq_residuals_test[v_idx] <- sum_sq_residuals_test[v_idx] + current_rss_v_test
-        sum_sq_total_test[v_idx] <- sum_sq_total_test[v_idx] + current_tss_v_test
-        voxel_is_valid[v_idx] <- TRUE # Mark that this voxel had at least one valid LORO calculation
+    if (any(vox_eligible)) {
+      Y_test_valid <- Y_test[, vox_eligible, drop = FALSE]
+      residuals_valid <- residuals_test[, vox_eligible, drop = FALSE]
+
+      mean_y <- colMeans(Y_test_valid, na.rm = TRUE)
+      rss_vals <- colSums(residuals_valid^2, na.rm = TRUE)
+      centered <- sweep(Y_test_valid, 2, mean_y, "-")
+      tss_vals <- colSums(centered^2, na.rm = TRUE)
+
+      update_mask <- tss_vals >= 1e-9
+      if (any(update_mask)) {
+        vox_indices <- which(vox_eligible)[update_mask]
+        sum_sq_residuals_test[vox_indices] <- sum_sq_residuals_test[vox_indices] + rss_vals[update_mask]
+        sum_sq_total_test[vox_indices] <- sum_sq_total_test[vox_indices] + tss_vals[update_mask]
+        voxel_is_valid[vox_indices] <- TRUE
       }
     }
   } # End LORO run loop
