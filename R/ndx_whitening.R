@@ -274,16 +274,25 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
       return(Y_whitened_matrix)
   }
 
-  for (v_idx in seq_len(n_voxels)) {
-    voxel_coeffs_row_vec <- voxel_ar_coeffs_matrix[v_idx, ]
-    if (all(is.na(voxel_coeffs_row_vec)) || all(voxel_coeffs_row_vec == 0)) {
-      Y_whitened_matrix[, v_idx] <- Y_data_matrix[, v_idx]
-      next
+  filter_one_column <- function(col_vec, coeff_vec) {
+    if (all(is.na(coeff_vec)) || all(coeff_vec == 0)) {
+      return(col_vec)
     }
-    filter_coeffs_for_voxel <- c(1, -as.numeric(voxel_coeffs_row_vec))
-    Y_whitened_matrix[, v_idx] <- stats::filter(Y_data_matrix[, v_idx],
-                                              filter = filter_coeffs_for_voxel,
-                                              method = "convolution", sides = 1)
+    stats::filter(col_vec,
+                  filter = c(1, -as.numeric(coeff_vec)),
+                  method = "convolution", sides = 1)
   }
+
+  coeffs_list <- split(voxel_ar_coeffs_matrix, row(voxel_ar_coeffs_matrix))
+  Y_whitened_matrix <- mapply(filter_one_column,
+                              as.data.frame(Y_data_matrix),
+                              coeffs_list,
+                              SIMPLIFY = TRUE)
+
+  if (is.vector(Y_whitened_matrix)) {
+    Y_whitened_matrix <- matrix(Y_whitened_matrix, ncol = 1)
+  }
+  dimnames(Y_whitened_matrix) <- dimnames(Y_data_matrix)
+
   return(Y_whitened_matrix)
-} 
+}
