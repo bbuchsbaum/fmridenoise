@@ -24,3 +24,35 @@ test_that("ndx_run_annihilation_setup handles disabled mode", {
   res <- ndx_run_annihilation_setup(Y, events, motion, rep(1,10), 1, list(annihilation_enable_mode = FALSE))
   expect_null(res$selected_pcs)
 })
+
+test_that("ndx_run_annihilation_setup returns PCs and diagnostics when enabled", {
+  set.seed(123)
+  n_time <- 6
+  run_idx <- rep(1:2, each = 3)
+  Y <- matrix(rnorm(n_time * 4), nrow = n_time, ncol = 4)
+  events <- data.frame(
+    onsets = c(0, 3),
+    durations = c(1, 1),
+    condition = factor("A"),
+    blockids = 1:2
+  )
+  motion <- matrix(rnorm(n_time * 2), nrow = n_time, ncol = 2)
+  opts <- list(
+    annihilation_enable_mode = TRUE,
+    annihilation_gdlite_poly_degree = 0,
+    annihilation_gdlite_k_max = 2,
+    annihilation_gdlite_r2_thresh_noise_pool = 1,
+    annihilation_gdlite_tsnr_thresh_noise_pool = -Inf,
+    annihilation_gdlite_r2_thresh_good_voxels = -Inf
+  )
+
+  res <- ndx_run_annihilation_setup(Y, events, motion, run_idx, 1, opts, verbose = FALSE)
+
+  expect_true(is.matrix(res$selected_pcs))
+  expect_true(ncol(res$selected_pcs) > 0)
+  expect_true("r2_vals_by_k" %in% names(res$gdlite_results))
+
+  opts$annihilation_enable_mode <- FALSE
+  res_dis <- ndx_run_annihilation_setup(Y, events, motion, run_idx, 1, opts, verbose = FALSE)
+  expect_null(res_dis$selected_pcs)
+})
