@@ -433,16 +433,23 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
       ))
     }
 
-    for (idx in remaining) {
-      cols <- (2 * (idx - 1) + 1):(2 * idx)
-      X_tmp <- cbind(current_X, U_candidates[, cols, drop = FALSE])
-      ic_val <- .calc_spectral_ic(y, X_tmp, criterion)
-      if (verbose) message(sprintf("    Trying pair %d (IC = %.4f)", idx, ic_val))
-      if (ic_val < best_ic) {
-        best_ic <- ic_val
-        best_pair <- idx
-      }
+    col_matrix <- rbind(2 * (remaining - 1) + 1, 2 * remaining)
+    pair_cols <- as.vector(col_matrix)
+    pair_array <- array(U_candidates[, pair_cols, drop = FALSE],
+                        dim = c(nrow(U_candidates), 2, length(remaining)))
+    ic_vals <- apply(pair_array, 3, function(pm) {
+      X_tmp <- cbind(current_X, pm)
+      .calc_spectral_ic(y, X_tmp, criterion)
+    })
+    if (verbose) {
+      invisible(vapply(seq_along(remaining), function(i) {
+        message(sprintf("    Trying pair %d (IC = %.4f)", remaining[i], ic_vals[i]))
+        NA_real_
+      }, numeric(1)))
     }
+    best_idx_pos <- which.min(ic_vals)
+    best_ic <- ic_vals[best_idx_pos]
+    best_pair <- remaining[best_idx_pos]
 
     if (is.na(best_pair)) break
 
@@ -456,7 +463,7 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
       current_X <- cbind(current_X, U_candidates[, cols_to_add, drop = FALSE])
       base_ic <- best_ic
       selected <- c(selected, best_pair)
-      remaining <- setdiff(remaining, best_pair)
+      remaining <- remaining[-best_idx_pos]
       if (length(remaining) == 0) break
     } else {
       break
