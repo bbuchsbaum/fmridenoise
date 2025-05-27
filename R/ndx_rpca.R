@@ -205,9 +205,14 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
 #'
 #' @param V_list_valid A list of valid V_r matrices (Voxels x k_r). Each matrix should have the same number of rows (Voxels).
 #' @param k_target_global Integer, the desired number of dimensions (columns) for the final V_global.
-#' @return A matrix V_global (Voxels x k_target_global), or NULL if merging fails or k_target_global is 0.
+#' @param profile_svd Logical, if TRUE record execution time of each SVD step
+#'   (returned as an attribute \code{svd_times}).
+#' @return A matrix V_global (Voxels x k_target_global). If \code{profile_svd}
+#'   is TRUE, the matrix has an attribute \code{svd_times} containing elapsed
+#'   times for the SVD calls. Returns NULL if merging fails or
+#'   \code{k_target_global} is 0.
 #' @keywords internal
-.grassmann_merge_iterative <- function(V_list_valid, k_target_global) {
+.grassmann_merge_iterative <- function(V_list_valid, k_target_global, profile_svd = FALSE) {
   if (length(V_list_valid) == 0) {
     warning(".grassmann_merge_iterative: V_list_valid is empty.")
     return(NULL)
@@ -215,6 +220,10 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   if (k_target_global <= 0) {
     warning(".grassmann_merge_iterative: k_target_global must be positive.")
     return(NULL)
+  }
+
+  if (profile_svd) {
+    svd_times <- numeric(max(length(V_list_valid) - 1, 0))
   }
 
   # Initialize V_global with the first valid V_r, ensuring it has k_target_global or fewer columns
@@ -277,7 +286,14 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
         warning(sprintf("Iterative merge: k_for_this_svd is %d for item %d. Cannot perform SVD. Retaining previous V_global.", k_for_this_svd, r_idx))
         # V_global remains as it was before this problematic Vr
       } else {
-        svd_M <- svd(M_proj, nu = k_for_this_svd, nv = 0)
+        if (profile_svd) {
+          t_elapsed <- system.time({
+            svd_M <- svd(M_proj, nu = k_for_this_svd, nv = 0)
+          })["elapsed"]
+          svd_times[r_idx - 1] <- t_elapsed
+        } else {
+          svd_M <- svd(M_proj, nu = k_for_this_svd, nv = 0)
+        }
         if (is.null(svd_M$u) || ncol(svd_M$u) == 0) {
             warning(sprintf("Iterative merge: SVD of M_proj for item %d yielded no U components. Retaining previous V_global.", r_idx))
         } else {
@@ -301,6 +317,7 @@ ndx_rpca_temporal_components_multirun <- function(Y_residuals_cat, run_idx,
   }
   
   message(sprintf("Iterative Grassmann Merge: Final V_global obtained with %d components.", ncol(V_global)))
+  if (profile_svd) attr(V_global, "svd_times") <- svd_times
   return(V_global)
 }
 

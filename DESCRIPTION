@@ -13,11 +13,13 @@ Encoding: UTF-8
 LazyData: false
 Remotes:
     bbuchsbaum/fmrireg
+LinkingTo: Rcpp, RcppArmadillo
 Imports:
     fmrireg,
     glmgen,
     genlasso,
     Rcpp (>= 1.0.0),
+    RcppArmadillo,
     neuroim2,
     oro.nifti,
     multitaper,
