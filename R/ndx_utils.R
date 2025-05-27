@@ -91,32 +91,26 @@ calculate_R2_voxelwise <- function(Y_observed, Y_residuals) {
     stop("Dimensions of Y_observed and Y_residuals must match.")
   }
 
-  n_vox <- ncol(Y_observed)
-  R2 <- numeric(n_vox)
-  for (j in seq_len(n_vox)) {
-    mask <- !is.na(Y_observed[, j])
-    if (sum(mask) == 0) {
-      R2[j] <- 0
-      next
-    }
+  mask <- !is.na(Y_observed)
 
-    y_obs <- Y_observed[mask, j]
-    y_res <- Y_residuals[mask, j]
-    TSS <- sum((y_obs - mean(y_obs))^2)
-    RSS <- sum(y_res^2, na.rm = TRUE)
+  valid_counts <- matrixStats::colSums2(mask)
 
-    if (abs(TSS) < 1e-9) {
-      R2[j] <- 0
-    } else {
-      r2_val <- 1 - (RSS / TSS)
-      if (!is.finite(r2_val) || r2_val < 0) r2_val <- 0
-      R2[j] <- r2_val
-    }
-  }
+  obs_clean <- Y_observed
+  obs_clean[!mask] <- 0
 
-  R2 <- unname(R2)
-  R2[R2 < 0] <- 0 
-  return(R2)
+  means <- matrixStats::colSums2(obs_clean) / ifelse(valid_counts > 0, valid_counts, 1)
+
+  centered <- (obs_clean - matrix(means, nrow = nrow(Y_observed), ncol = ncol(Y_observed), byrow = TRUE)) * mask
+  TSS <- matrixStats::colSums2(centered^2)
+
+  res_clean <- Y_residuals
+  res_clean[is.na(res_clean)] <- 0
+  RSS <- matrixStats::colSums2((res_clean^2) * mask)
+
+  R2 <- ifelse(valid_counts == 0 | TSS < 1e-9, 0, 1 - RSS / TSS)
+  R2[!is.finite(R2) | R2 < 0] <- 0
+
+  unname(R2)
 }
 
 #' Calculate Denoising Efficacy Score (DES)
