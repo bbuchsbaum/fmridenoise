@@ -96,66 +96,23 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
     }
   }
 
-  AR_coeffs_voxelwise <- matrix(NA_real_, nrow = n_voxels, ncol = order)
-  var_innovations_voxelwise <- numeric(n_voxels)
-  num_phi_zeroed <- 0 # Counter for voxels with phi set to 0 (failed fit or unstable)
-  
   if (verbose) message(sprintf("Estimating AR(%d) coefficients for %d voxels...", order, n_voxels))
-  for (v_idx in seq_len(n_voxels)) {
-    voxel_residuals <- Y_residuals_for_AR_fit[, v_idx]
-    ar_fit <- NULL
-    current_phi <- rep(0, order) # Initialize to zero for this voxel
-    current_var_pred <- NA_real_
 
-    tryCatch({
-      if (stats::var(voxel_residuals, na.rm = TRUE) > .Machine$double.eps^0.5) {
-        if (is.null(weights)) {
-          ar_fit <- stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
-        } else {
-          w_vec <- weights[, v_idx]
-          embed_mat <- stats::embed(voxel_residuals, order + 1)
-          y_ar <- embed_mat[, 1]
-          X_ar <- embed_mat[, -1, drop = FALSE]
-          w_ar <- w_vec[(order + 1):n_timepoints]
-          if (sum(w_ar, na.rm = TRUE) > 0) {
-            fit <- tryCatch(stats::lm.wfit(x = X_ar, y = y_ar, w = w_ar),
-                            error = function(e) NULL)
-            if (!is.null(fit) && length(fit$coefficients) == order) {
-              ar_fit <- list(ar = as.numeric(fit$coefficients),
-                             var.pred = sum((fit$residuals^2) * w_ar) / sum(w_ar))
-            }
-          }
-        }
-      } else {
-        ar_fit <- NULL # Treat as failure if variance is too low
-      }
-    }, error = function(e) {
-      ar_fit <<- NULL
-    })
+  fit_env <- new.env(parent = emptyenv())
+  fit_env$idx <- 0L
 
-    if (!is.null(ar_fit) && length(ar_fit$ar) == order) {
-      phi_candidate <- ar_fit$ar
-      # Stability check
-      roots <- tryCatch(polyroot(c(1, -phi_candidate)), error = function(e) NULL)
-      if (!is.null(roots) && !any(is.na(roots)) && all(Mod(roots) > 1.00001)) {
-        current_phi <- phi_candidate
-        ## Zero out very small coefficients so that white noise is left unchanged
-        current_phi[abs(current_phi) < 0.01] <- 0
-        current_var_pred <- ar_fit$var.pred
-      }
-      # else leave zeros
-    }
-    
-    AR_coeffs_voxelwise[v_idx, ] <- current_phi
-    var_innovations_voxelwise[v_idx] <- current_var_pred
-    if (all(current_phi == 0)) {
-        num_phi_zeroed <- num_phi_zeroed + 1
-    }
-    
-    if (v_idx %% round(n_voxels/10) == 0 && n_voxels > 10 && verbose) {
-        message(sprintf("  ...processed %d/%d voxels (%.0f%%)", v_idx, n_voxels, (v_idx/n_voxels)*100))
-    }
-  }
+  ar_results <- apply(Y_residuals_for_AR_fit, 2, function(res_col) {
+    fit_env$idx <- fit_env$idx + 1L
+    w_vec <- if (is.null(weights)) NULL else weights[, fit_env$idx]
+    .fit_ar_single_voxel(res_col, order = order, weights_vec = w_vec)
+  })
+
+  if (is.vector(ar_results)) ar_results <- matrix(ar_results, nrow = order + 1)
+
+  AR_coeffs_voxelwise <- t(ar_results[seq_len(order), , drop = FALSE])
+  var_innovations_voxelwise <- as.numeric(ar_results[order + 1, ])
+  num_phi_zeroed <- sum(rowSums(AR_coeffs_voxelwise != 0) == 0)
+
   if (verbose) message("AR coefficient estimation complete.")
 
   # Report on initially NA coefficients (which are now 0 if stability check also failed or fit was null)
@@ -296,3 +253,59 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
 
   return(Y_whitened_matrix)
 }
+
+
+#' Fit AR coefficients for a single voxel
+#'
+#' Helper function used by `ndx_ar2_whitening` to estimate AR coefficients and
+#' innovation variance for one voxel.
+#'
+#' @param voxel_residuals Numeric vector of residuals for one voxel.
+#' @param order Integer AR model order.
+#' @param weights_vec Optional numeric vector of weights for weighted fitting.
+#' @return Numeric vector containing the estimated AR coefficients followed by
+#'   the innovation variance.
+#' @keywords internal
+.fit_ar_single_voxel <- function(voxel_residuals, order = 2L, weights_vec = NULL) {
+  ar_fit <- NULL
+  phi <- rep(0, order)
+  var_pred <- NA_real_
+
+  tryCatch({
+    if (stats::var(voxel_residuals, na.rm = TRUE) > .Machine$double.eps^0.5) {
+      if (is.null(weights_vec)) {
+        ar_fit <- stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
+      } else {
+        embed_mat <- stats::embed(voxel_residuals, order + 1)
+        y_ar <- embed_mat[, 1]
+        X_ar <- embed_mat[, -1, drop = FALSE]
+        w_ar <- weights_vec[(order + 1):length(voxel_residuals)]
+        if (sum(w_ar, na.rm = TRUE) > 0) {
+          fit <- tryCatch(stats::lm.wfit(x = X_ar, y = y_ar, w = w_ar),
+                          error = function(e) NULL)
+          if (!is.null(fit) && length(fit$coefficients) == order) {
+            ar_fit <- list(ar = as.numeric(fit$coefficients),
+                           var.pred = sum((fit$residuals^2) * w_ar) / sum(w_ar))
+          }
+        }
+      }
+    } else {
+      ar_fit <- NULL
+    }
+  }, error = function(e) {
+    ar_fit <<- NULL
+  })
+
+  if (!is.null(ar_fit) && length(ar_fit$ar) == order) {
+    phi_candidate <- ar_fit$ar
+    roots <- tryCatch(polyroot(c(1, -phi_candidate)), error = function(e) NULL)
+    if (!is.null(roots) && !any(is.na(roots)) && all(Mod(roots) > 1.00001)) {
+      phi <- phi_candidate
+      phi[abs(phi) < 0.01] <- 0
+      var_pred <- ar_fit$var.pred
+    }
+  }
+
+  c(phi, var_pred)
+}
+
