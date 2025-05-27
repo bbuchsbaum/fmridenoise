@@ -4,15 +4,16 @@
 \alias{.grassmann_merge_iterative}
 \title{Iterative Grassmann Averaging of Voxel-Space Components}
 \usage{
-.grassmann_merge_iterative(V_list_valid, k_target_global)
+.grassmann_merge_iterative(V_list_valid, k_target_global, profile_svd = FALSE)
 }
 \arguments{
 \item{V_list_valid}{A list of valid V_r matrices (Voxels x k_r). Each matrix should have the same number of rows (Voxels).}
 
 \item{k_target_global}{Integer, the desired number of dimensions (columns) for the final V_global.}
+\item{profile_svd}{Logical flag; if \code{TRUE}, execution time for each SVD step is recorded and returned as an attribute.}
 }
 \value{
-A matrix V_global (Voxels x k_target_global), or NULL if merging fails or k_target_global is 0.
+A matrix V_global (Voxels x k_target_global). When \code{profile_svd} is \code{TRUE}, the matrix includes an attribute \code{svd_times}. Returns NULL if merging fails or \code{k_target_global} is 0.
 }
 \description{
 Merges a list of voxel-space component matrices (V_r from each run/bag)
