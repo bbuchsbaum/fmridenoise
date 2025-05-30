@@ -135,17 +135,19 @@ NDX_Process_Subject <- function(Y_fmri,
     if (verbose) message(sprintf("\n--- Starting ND-X Pass %d/%d ---", pass_num, max_passes))
     
     # Run single pass with error handling
-    tryCatch({
-      workflow_state <- .ndx_run_single_pass(workflow_state, pass_num)
+    pass_result <- tryCatch({
+      list(state = .ndx_run_single_pass(workflow_state, pass_num))
     }, error = function(e) {
       if (verbose) message(sprintf("Pass %d failed with error: %s", pass_num, e$message))
       # Set a minimal current_pass_results if it doesn't exist
       if (is.null(workflow_state$current_pass_results)) {
-        workflow_state$current_pass_results <<- list()
+        workflow_state$current_pass_results <- list()
       }
       # Break out of the loop by setting Y_residuals_current to NULL
-      workflow_state$Y_residuals_current <<- NULL
+      workflow_state$Y_residuals_current <- NULL
+      list(state = workflow_state)
     })
+    workflow_state <- pass_result$state
     
     # Check for early termination
     if (is.null(workflow_state$Y_residuals_current)) {

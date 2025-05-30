@@ -492,14 +492,16 @@ solve_weighted_ridge <- function(Y_eff, X_eff, K_penalty_diag = NULL,
 
   betas <- NULL
   chol_decomp <- NULL
-  tryCatch({
+  solve_res <- tryCatch({
     chol_decomp <- chol(lhs)
     betas <- chol2inv(chol_decomp) %*% XtY
+    list(betas = betas, chol_decomp = chol_decomp)
   }, error = function(e) {
     warning(paste("Solving anisotropic ridge regression failed (Cholesky method):", e$message))
-    betas <<- NULL
-    chol_decomp <<- NULL
+    list(betas = NULL, chol_decomp = NULL)
   })
+  betas <- solve_res$betas
+  chol_decomp <- solve_res$chol_decomp
 
   if (is.null(betas)) {
     return(NULL)

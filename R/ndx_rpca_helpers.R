@@ -184,12 +184,11 @@
     run_name, nrow(Er_t), ncol(Er_t), k_this_run, lambda_r
   ))
 
-  rpca_res_r <- NULL
-  tryCatch({
-    rpca_res_r <- do.call(rpca, rpca_call_args)
+  rpca_res_r <- tryCatch({
+    do.call(rpca, rpca_call_args)
   }, error = function(e) {
     warning(sprintf("rpca::rpca failed for run %s: %s", run_name, e$message))
-    rpca_res_r <<- NULL
+    NULL
   })
 
   if (is.null(rpca_res_r) || is.null(rpca_res_r$L)) {
@@ -211,12 +210,11 @@
     ))
   }
 
-  svd_L_r_t <- NULL
-  tryCatch({
-    svd_L_r_t <- svd(L_r_t, nu = k_eff_svd_L, nv = 0)
+  svd_L_r_t <- tryCatch({
+    svd(L_r_t, nu = k_eff_svd_L, nv = 0)
   }, error = function(e) {
     warning(sprintf("SVD on L_r_t for run %s failed: %s", run_name, e$message))
-    svd_L_r_t <<- NULL
+    NULL
   })
 
   if (is.null(svd_L_r_t) || is.null(svd_L_r_t$u) || ncol(svd_L_r_t$u) == 0) {
@@ -313,12 +311,11 @@
       ))
       return(list(V_global = NULL, singular_values = NULL))
     }
-    svd_V_all <- NULL
-    tryCatch({
-      svd_V_all <- svd(V_all_concat, nu = k_for_svd_V_all, nv = 0)
+    svd_V_all <- tryCatch({
+      svd(V_all_concat, nu = k_for_svd_V_all, nv = 0)
     }, error = function(e) {
       warning(paste("SVD on concatenated V_r components for V_global failed:", e$message))
-      svd_V_all <<- NULL
+      NULL
     })
     if (is.null(svd_V_all) || is.null(svd_V_all$u) || ncol(svd_V_all$u) == 0) {
       warning("SVD on concatenated V_r for V_global failed to produce U vectors.")
