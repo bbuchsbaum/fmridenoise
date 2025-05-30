@@ -4,7 +4,6 @@
 # - Basic preprocessing (demeaning, detrending if not part of Pass 0)
 # - Other miscellaneous utilities
 
-#' @useDynLib ndx, .registration = TRUE
 #' @import Rcpp neuroim2 oro.nifti psd rsvd
 #' @importFrom stats convolve lm.fit
 #' @importFrom oro.nifti origin reorient slice
