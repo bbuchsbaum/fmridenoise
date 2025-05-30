@@ -8,6 +8,8 @@ NULL
 
 #' Validate inputs for `NDX_Process_Subject`
 #'
+#' Checks that input matrices and vectors have the correct types and dimensions before running the workflow.
+#'
 #' @param Y_fmri Numeric matrix of fMRI data.
 #' @param events Data frame of events.
 #' @param motion_params Numeric matrix of motion parameters.
@@ -50,6 +52,9 @@ ndx_validate_process_subject_inputs <- function(Y_fmri, events, motion_params,
 
 #' Merge user options with defaults
 #'
+#' Combines user-supplied workflow options with the ND-X defaults,
+#' filling in any unspecified values.
+#'
 #' @param user_options List of user supplied options.
 #' @return Named list of options where unspecified values are filled with defaults.
 #' @export
@@ -59,6 +64,8 @@ ndx_prepare_workflow_options <- function(user_options = list()) {
 }
 
 #' Run the optional GLMdenoise-Lite setup for Annihilation mode
+#'
+#' Executes a light-weight GLMdenoise procedure when Annihilation Mode is enabled. The selected principal components are returned along with the full GLMdenoise-Lite results.
 #'
 #' @param Y_fmri Numeric matrix of fMRI data.
 #' @param events Data frame of events.

@@ -286,6 +286,7 @@ create_stage_description_panel <- function() {
 }
 
 #' Add Progressive Enhancement Visualization to HTML Report
+#' Inserts a progressive enhancement visualization section into the diagnostic HTML report.
 #'
 #' @param html_lines Character vector of HTML lines for the report
 #' @param workflow_output List returned by NDX_Process_Subject

@@ -306,6 +306,7 @@ merge_lists <- function(defaults, user) {
 #'
 #' @param a First value.
 #' @param b Fallback value.
+#' @return `a` if not `NULL`, otherwise `b`.
 #' @keywords internal
 #' @export
 `%||%` <- function(a, b) {
