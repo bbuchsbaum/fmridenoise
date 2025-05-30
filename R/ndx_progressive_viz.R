@@ -4,13 +4,11 @@
 #' at different processing stages of ND-X. Uses htmlwidgets to create
 #' static HTML that works without requiring a Shiny server.
 #'
-#' @param workflow_output List returned by NDX_Process_Subject with Annihilation Mode enabled
 #' @param workflow_output List returned by `NDX_Process_Subject` with
 #'   Annihilation Mode enabled. It must contain at minimum the elements
 #'   `diagnostics_per_pass` (each with a `DES` value),
 #'   `beta_history_per_pass` (list of beta matrices per pass),
 #'   `pass0_residuals`, and `Y_residuals_final_unwhitened`.
-#' @param gdlite_only_results Optional results from running with only GLMdenoise components
 #' @param output_dir Directory to save visualization files
 #' @param width Width of the HTML widget
 #' @param height Height of the HTML widget
