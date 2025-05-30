@@ -10,7 +10,7 @@
 #'   `S_matrix` are treated as zero (yielding a weight of one). Default `TRUE`.
 #' @return Numeric matrix of precision weights with the same dimensions as
 #'   `S_matrix`.
-#' @export ndx_precision_weights_from_S
+#' @export
 ndx_precision_weights_from_S <- function(S_matrix, mad_floor = 1e-6,
                                          na_zero = TRUE) {
   if (!is.matrix(S_matrix) || !is.numeric(S_matrix)) {

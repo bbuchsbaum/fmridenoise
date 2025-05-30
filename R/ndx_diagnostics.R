@@ -406,7 +406,7 @@ ndx_generate_html_report <- function(workflow_output,
 #' @param output_path File path to save the JSON sidecar. Defaults to
 #'   "sub-ndx.json" in the current working directory.
 #' @return Invisibly, the path to the written JSON file.
-#' @export ndx_generate_json_certificate
+#' @export
 ndx_generate_json_certificate <- function(workflow_output,
                                           output_path = "sub-ndx.json") {
   if (is.null(workflow_output) || !is.list(workflow_output)) {
