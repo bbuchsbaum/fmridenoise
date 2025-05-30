@@ -20,6 +20,7 @@
 ^repomix-output\.xml$
 ^run_tests\.R$
 ^debug_script\.R$
+^temp_debug_spectral\.R$
 
 # R CMD check artifacts
 ^\.Rcheck$
