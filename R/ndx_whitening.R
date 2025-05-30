@@ -195,63 +195,32 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
 .apply_ar_filter_to_matrix_cols <- function(M, ar_parameters_single_row, ar_order) {
   if (!is.numeric(M) || !is.matrix(M)) stop(".apply_ar_filter_to_matrix_cols: M must be a numeric matrix.")
   if (ar_order < 1) return(M)
-  
-  if (is.null(ar_parameters_single_row) || length(ar_parameters_single_row) != ar_order || 
+
+  if (is.null(ar_parameters_single_row) || length(ar_parameters_single_row) != ar_order ||
       all(is.na(ar_parameters_single_row)) || all(ar_parameters_single_row == 0)){
       return(M)
   }
-  
-  filter_coeffs <- c(1, -as.numeric(ar_parameters_single_row))
+
   n_timepoints_m <- nrow(M)
-  
   if (n_timepoints_m <= ar_order) {
     warning(sprintf("Matrix to be filtered has %d rows, AR order is %d. Returning NA matrix.", n_timepoints_m, ar_order))
     return(matrix(NA_real_, nrow = n_timepoints_m, ncol = ncol(M)))
   }
-  
-  M_whitened <- apply(M, 2, function(col_data) {
-    stats::filter(col_data, filter = filter_coeffs, method = "convolution", sides = 1)
-  })
-  if (is.vector(M_whitened)) {
-      M_whitened <- matrix(M_whitened, ncol=1)
-  }
-  return(M_whitened)
+
+  apply_ar_filter_matrix_cpp(M, ar_parameters_single_row)
 }
 
 .apply_ar_filter_voxelwise <- function(Y_data_matrix, voxel_ar_coeffs_matrix, ar_order) {
   if (!is.numeric(Y_data_matrix) || !is.matrix(Y_data_matrix)) stop(".apply_ar_filter_voxelwise: Y_data_matrix must be a numeric matrix.")
   if (ar_order < 1) return(Y_data_matrix)
-  
-  n_voxels <- ncol(Y_data_matrix)
+
   n_timepoints_y <- nrow(Y_data_matrix)
-  Y_whitened_matrix <- matrix(NA_real_, nrow = n_timepoints_y, ncol = n_voxels)
-  
   if (n_timepoints_y <= ar_order) {
       warning(sprintf("Y_data has %d rows, AR order is %d. Returning NA matrix.", n_timepoints_y, ar_order))
-      return(Y_whitened_matrix)
+      return(matrix(NA_real_, nrow = n_timepoints_y, ncol = ncol(Y_data_matrix)))
   }
 
-  filter_one_column <- function(col_vec, coeff_vec) {
-    if (all(is.na(coeff_vec)) || all(coeff_vec == 0)) {
-      return(col_vec)
-    }
-    stats::filter(col_vec,
-                  filter = c(1, -as.numeric(coeff_vec)),
-                  method = "convolution", sides = 1)
-  }
-
-  coeffs_list <- split(voxel_ar_coeffs_matrix, row(voxel_ar_coeffs_matrix))
-  Y_whitened_matrix <- mapply(filter_one_column,
-                              as.data.frame(Y_data_matrix),
-                              coeffs_list,
-                              SIMPLIFY = TRUE)
-
-  if (is.vector(Y_whitened_matrix)) {
-    Y_whitened_matrix <- matrix(Y_whitened_matrix, ncol = 1)
-  }
-  dimnames(Y_whitened_matrix) <- dimnames(Y_data_matrix)
-
-  return(Y_whitened_matrix)
+  apply_ar_filter_voxelwise_cpp(Y_data_matrix, voxel_ar_coeffs_matrix)
 }
 
 
