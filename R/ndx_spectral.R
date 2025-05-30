@@ -490,7 +490,6 @@ ndx_spectral_sines <- function(mean_residual_for_spectrum, TR,
 #' @param verbose Logical, whether to print verbose diagnostic messages.
 #' @return Matrix of selected regressors (or NULL if none selected). Attributes
 #'   "freq_hz" and "freq_rad_s" are propagated for the selected frequencies.
-#' @keywords internal
 #' @export
 Select_Significant_Spectral_Regressors <- function(y, U_candidates,
                                                    criterion = c("BIC", "AIC"),

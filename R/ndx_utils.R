@@ -21,7 +21,6 @@ NULL
 #'
 #' @param x An object that might be `NULL`.
 #' @return `NA` if `x` is `NULL`, otherwise `x`.
-#' @keywords internal
 #' @export
 ndx_val_or_na <- function(x) {
   if (is.null(x)) NA else x
@@ -33,7 +32,6 @@ ndx_val_or_na <- function(x) {
 #' @param X Design matrix (timepoints x regressors).
 #' @return Matrix of residuals (timepoints x variables/voxels).
 #' @importFrom stats lm.fit
-#' @keywords internal
 #' @export
 calculate_residuals_ols <- function(Y, X) {
   # Convert inputs to numeric matrices if possible
@@ -85,7 +83,6 @@ calculate_residuals_ols <- function(Y, X) {
 #'   Squares (RSS) are computed from these valid values only. If the calculated
 #'   TSS is zero the returned R\eqn{^2} for that voxel is set to zero.
 #' @importFrom matrixStats colVars
-#' @keywords internal
 #' @export
 calculate_R2_voxelwise <- function(Y_observed, Y_residuals) {
   if (nrow(Y_observed) != nrow(Y_residuals) || ncol(Y_observed) != ncol(Y_residuals)) {
@@ -294,7 +291,6 @@ ndx_orthogonalize_matrix_against_basis <- function(target_matrix, basis_matrix, 
 #' @param defaults A list of default values.
 #' @param user User-supplied options.
 #' @return Combined list.
-#' @keywords internal
 #' @export
 merge_lists <- function(defaults, user) {
   utils::modifyList(defaults, if (is.null(user)) list() else user)
@@ -306,7 +302,6 @@ merge_lists <- function(defaults, user) {
 #'
 #' @param a First value.
 #' @param b Fallback value.
-#' @keywords internal
 #' @export
 `%||%` <- function(a, b) {
   if (is.null(a)) b else a
