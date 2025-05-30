@@ -271,10 +271,10 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
   phi <- rep(0, order)
   var_pred <- NA_real_
 
-  tryCatch({
+  ar_fit_res <- tryCatch({
     if (stats::var(voxel_residuals, na.rm = TRUE) > .Machine$double.eps^0.5) {
       if (is.null(weights_vec)) {
-        ar_fit <- stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
+        stats::ar.yw(voxel_residuals, aic = FALSE, order.max = order)
       } else {
         embed_mat <- stats::embed(voxel_residuals, order + 1)
         y_ar <- embed_mat[, 1]
@@ -284,17 +284,22 @@ ndx_ar2_whitening <- function(Y_data, X_design_full, Y_residuals_for_AR_fit,
           fit <- tryCatch(stats::lm.wfit(x = X_ar, y = y_ar, w = w_ar),
                           error = function(e) NULL)
           if (!is.null(fit) && length(fit$coefficients) == order) {
-            ar_fit <- list(ar = as.numeric(fit$coefficients),
-                           var.pred = sum((fit$residuals^2) * w_ar) / sum(w_ar))
+            list(ar = as.numeric(fit$coefficients),
+                 var.pred = sum((fit$residuals^2) * w_ar) / sum(w_ar))
+          } else {
+            NULL
           }
+        } else {
+          NULL
         }
       }
     } else {
-      ar_fit <- NULL
+      NULL
     }
   }, error = function(e) {
-    ar_fit <<- NULL
+    NULL
   })
+  if (!is.null(ar_fit_res)) ar_fit <- ar_fit_res
 
   if (!is.null(ar_fit) && length(ar_fit$ar) == order) {
     phi_candidate <- ar_fit$ar
