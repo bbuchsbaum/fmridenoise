@@ -382,22 +382,15 @@ cv_r2_loro <- function(Y_fmri, X_design, run_idx) {
     }
   } # End LORO run loop
 
-  # Calculate final R2_cv for each voxel
+  # Calculate final R2_cv for each voxel using vectorised operations
+  valid_mask <- voxel_is_valid & abs(sum_sq_total_test) >= 1e-9 * n_runs
   r2_cv_voxels <- numeric(n_voxels)
-  for (v_idx in 1:n_voxels) {
-    if (!voxel_is_valid[v_idx] || abs(sum_sq_total_test[v_idx]) < 1e-9 * n_runs) { # Check if TSS accumulated is too small
-      r2_cv_voxels[v_idx] <- 0 # Or NA_real_ if no valid LORO calculations or TSS is zero across all folds relevant to it
-    } else {
-      # The sums are over predictions of ALL voxels in EACH test run.
-      # For GLMdenoise, R^2_CV(v) = 1 - sum(Residuals_test^2(v)) / sum((Data_test(v) - mean(Data_test(v)))^2)
-      # where the sum is over all TRs *when voxel v was in a test set*. This is what the accumulation does.
-      r2_val <- 1 - (sum_sq_residuals_test[v_idx] / sum_sq_total_test[v_idx])
-      # Clamp R2 values: can be < 0 if model predicts worse than mean. GLMdenoise seems to cap at 0.
-      if (!is.finite(r2_val) || r2_val < 0) r2_val <- 0
-      r2_cv_voxels[v_idx] <- r2_val
-    }
-  }
-  
+  r2_cv_voxels[valid_mask] <- 1 - (sum_sq_residuals_test[valid_mask] / sum_sq_total_test[valid_mask])
+
+  # Clamp invalid or negative values to 0
+  invalid_idx <- !is.finite(r2_cv_voxels) | r2_cv_voxels < 0
+  r2_cv_voxels[invalid_idx] <- 0
+
   # Ensure R2 is not slightly negative due to floating point issues if model is very poor
   r2_cv_voxels[r2_cv_voxels < 0] <- 0
   return(r2_cv_voxels)
