@@ -44,6 +44,29 @@
 #'   - `ljung_box_p`: Ljung-Box p-value of whitened residuals.
 #'   - `num_hrf_clusters`: Effective HRF cluster count from HRF estimation.
 #'   - `annihilation_var_ratio` and `annihilation_verdict` when Annihilation mode is used.
+#' @examples
+#' \dontrun{
+#' set.seed(1)
+#' n_time <- 20; n_runs <- 2; n_voxels <- 5
+#' total_T <- n_time * n_runs
+#' Y_ex <- matrix(rnorm(total_T * n_voxels), nrow = total_T, ncol = n_voxels)
+#' run_idx_ex <- rep(1:n_runs, each = n_time)
+#' motion_ex <- matrix(rnorm(total_T * 6), nrow = total_T, ncol = 6)
+#' events_ex <- data.frame(
+#'   onsets = c(5, 15, 5, 15),
+#'   durations = 2,
+#'   condition = rep(c("A", "B"), 2),
+#'   blockids = rep(1:n_runs, each = 2)
+#' )
+#'
+#' res <- NDX_Process_Subject(
+#'   Y_fmri = Y_ex,
+#'   events = events_ex,
+#'   motion_params = motion_ex,
+#'   run_idx = run_idx_ex,
+#'   TR = 2
+#' )
+#' }
 #' @importFrom fmrireg event_model design_matrix sampling_frame
 #' @importFrom tibble is_tibble
 #' @export NDX_Process_Subject
