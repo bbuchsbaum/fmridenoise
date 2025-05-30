@@ -272,7 +272,6 @@ ndx_extract_gdlite_pcs <- function(Y_fmri,
 #'   in a test run, or if the GLM fit fails for a fold, its R-squared might be 0 or NA.
 #'
 #' @importFrom stats lm.fit var
-#' @keywords internal
 #' @export
 cv_r2_loro <- function(Y_fmri, X_design, run_idx) {
   if (!is.matrix(Y_fmri) || !is.numeric(Y_fmri)) stop("`Y_fmri` must be a numeric matrix.")
@@ -414,7 +413,6 @@ cv_r2_loro <- function(Y_fmri, X_design, run_idx) {
 #'   each voxel. Returns `NA` for voxels with zero standard deviation or if issues occur.
 #'
 #' @importFrom matrixStats colMeans2 colSds colMedians colMads
-#' @keywords internal
 #' @export
 calculate_tsnr <- function(Y_data, detrend = FALSE, robust = FALSE) {
   if (!is.matrix(Y_data) || !is.numeric(Y_data)) {
@@ -501,7 +499,6 @@ calculate_tsnr <- function(Y_data, detrend = FALSE, robust = FALSE) {
 #'   - `all_r2cv_per_K`: A list where each element is the full r2_cv vector for all voxels for a given K.
 #'
 #' @importFrom stats median
-#' @keywords internal
 #' @export
 select_optimal_k_gdlite <- function(Y_fmri,
                                       X_base_design,
