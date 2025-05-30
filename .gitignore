@@ -1,0 +1,18 @@
+# Ignore build artifacts and temporary files
+*.Rcheck/
+..Rcheck/
+repomix-output.xml
+debug_script.R
+temp_debug_spectral.R
+# R session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.Rapp.history
+# Other common temporary files
+.DS_Store
+*~
+*.swp
+*.swo
+Rplots.pdf
