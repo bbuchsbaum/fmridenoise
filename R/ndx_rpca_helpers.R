@@ -154,7 +154,7 @@
     return(svd_res$u)
   }
 
-  .grassmann_merge_iterative(V_list_valid, k_target)
+  .grassmann_merge_iterative_rcpp(V_list_valid, k_target)
 }
 #' Run RPCA for a Single Run
 #'
@@ -346,7 +346,7 @@
 
   if (opts$rpca_merge_strategy == "iterative") {
     message("Using Iterative Grassmann Averaging for V_global...")
-    V_global <- .grassmann_merge_iterative(V_list_valid, k_target)
+    V_global <- .grassmann_merge_iterative_rcpp(V_list_valid, k_target)
     if (is.null(V_global)) {
       warning("Iterative Grassmann Averaging failed to produce V_global.")
       return(list(V_global = NULL, singular_values = NULL))
