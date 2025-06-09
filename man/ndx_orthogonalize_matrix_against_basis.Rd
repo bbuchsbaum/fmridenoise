@@ -32,9 +32,11 @@ A matrix with the same dimensions as `target_matrix`, where each
 }
 \description{
 This function orthogonalizes each column of a `target_matrix` with respect to
-all columns in a `basis_matrix`. The orthogonalization is performed by
-successively regressing each target column against the `basis_matrix` and
-taking the residuals. This is a form of Gram-Schmidt orthogonalization.
+all columns in a `basis_matrix`. The orthogonalization is performed using a
+projection onto the orthonormal basis of `basis_matrix` computed via QR
+decomposition. Formally the result is
+`target_matrix - Q %*% crossprod(Q, target_matrix)` where `Q` contains the
+orthonormal columns spanning `basis_matrix`.
 }
 \examples{
 \dontrun{
