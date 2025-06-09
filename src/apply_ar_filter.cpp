@@ -1,4 +1,9 @@
 #include <Rcpp.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+// [[Rcpp::plugins(openmp)]]
 using namespace Rcpp;
 
 // [[Rcpp::export]]
@@ -28,6 +33,7 @@ NumericMatrix apply_ar_filter_matrix_cpp(const NumericMatrix& M,
         return res;
     }
 
+    #pragma omp parallel for
     for (int col = 0; col < m; ++col) {
         for (int t = 0; t < p && t < n; ++t) {
             res(t, col) = NA_REAL;
@@ -53,6 +59,7 @@ NumericMatrix apply_ar_filter_voxelwise_cpp(const NumericMatrix& Y,
         stop("Coefficient matrix rows must equal number of columns in Y");
 
     NumericMatrix res(n, m);
+    #pragma omp parallel for
     for (int col = 0; col < m; ++col) {
         bool use_filter = false;
         for (int k = 0; k < p; ++k) {
