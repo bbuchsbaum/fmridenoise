@@ -184,49 +184,38 @@ ndx_build_design_matrix <- function(estimated_hrfs,
       if (verbose) message(sprintf("    Skipping task regressor for condition '%s' due to NULL/empty or non-numeric HRF coefficients.", cond_name))
       next
     }
-    num_fir <- length(hrf_coeffs)
-
     current_condition_events <- events[events$condition == cond_name, , drop=FALSE]
     if (nrow(current_condition_events) == 0) {
         if(verbose) message(sprintf("    No events found for condition '%s'. Skipping task regressor.", cond_name))
         next
     }
 
-    X_fir_basis_cond <- matrix(0, nrow = total_timepoints, ncol = num_fir)
-    fir_colnames <- paste0(make.names(cond_name), "_FIR", 0:(num_fir-1))
-    colnames(X_fir_basis_cond) <- fir_colnames
+    regressor <- numeric(total_timepoints)
+    run_lengths <- sf$blocklens
+    run_starts  <- cumsum(c(0, head(run_lengths, -1))) + 1
+    run_ends    <- run_starts + run_lengths - 1
 
-    current_run_offset <- 0
-    for (run_idx_val in seq_along(sf$blocklens)) {
-      run_length_tps <- sf$blocklens[run_idx_val]
-      run_start_tp_global <- current_run_offset + 1
-      run_end_tp_global <- current_run_offset + run_length_tps
+    for (run_idx_val in seq_along(run_lengths)) {
       run_events <- current_condition_events[current_condition_events$blockids == run_idx_val, ]
-
       if (nrow(run_events) > 0) {
-        onset_tp_global <- floor(run_events$onsets / TR) + run_start_tp_global
-        idx_matrix <- outer(onset_tp_global, 0:(num_fir - 1), "+")
-        valid_mask <- idx_matrix >= run_start_tp_global &
-                      idx_matrix <= run_end_tp_global &
-                      idx_matrix <= total_timepoints
-        if (any(valid_mask)) {
-          row_idx <- idx_matrix[valid_mask]
-          col_idx <- matrix(rep(seq_len(num_fir), each = length(onset_tp_global)),
-                            nrow = length(onset_tp_global))[valid_mask]
-          X_fir_basis_cond[cbind(row_idx, col_idx)] <- 1
+        onset_idx <- floor(run_events$onsets / TR) + 1
+        onset_idx <- onset_idx[onset_idx >= 1 & onset_idx <= run_lengths[run_idx_val]]
+        stim_vec <- numeric(run_lengths[run_idx_val])
+        if (length(onset_idx) > 0) {
+          stim_vec[onset_idx] <- 1
+          conv_res <- stats::filter(stim_vec, hrf_coeffs, sides = 1, method = "convolution")
+          conv_res[is.na(conv_res)] <- 0
+          regressor[run_starts[run_idx_val]:run_ends[run_idx_val]] <-
+            regressor[run_starts[run_idx_val]:run_ends[run_idx_val]] +
+            as.numeric(conv_res[seq_len(run_lengths[run_idx_val])])
         }
       }
-      current_run_offset <- current_run_offset + run_length_tps
     }
-    
-    if (ncol(X_fir_basis_cond) == length(hrf_coeffs)) {
-      X_task_cond <- X_fir_basis_cond %*% hrf_coeffs 
+
+    if (any(regressor != 0)) {
       colname_task <- paste0("task_", make.names(cond_name))
-      colnames(X_task_cond) <- colname_task
-      task_designs_list[[colname_task]] <- X_task_cond
-    } else {
-      if (verbose) message(sprintf("    Warning: Manual FIR basis for '%s' had %d columns, but hrf_coeffs length is %d. Skipping task regressor.", 
-                                   cond_name, ncol(X_fir_basis_cond), length(hrf_coeffs)))
+      task_designs_list[[colname_task]] <- matrix(regressor, ncol = 1,
+                                                 dimnames = list(NULL, colname_task))
     }
   }
   
