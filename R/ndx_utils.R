@@ -163,9 +163,11 @@ calculate_DES <- function(current_residuals_unwhitened, VAR_BASELINE_FOR_DES) {
 #' Orthogonalize a Target Matrix Against a Basis Matrix
 #'
 #' This function orthogonalizes each column of a `target_matrix` with respect to
-#' all columns in a `basis_matrix`. The orthogonalization is performed by
-#' successively regressing each target column against the `basis_matrix` and
-#' taking the residuals. This is a form of Gram-Schmidt orthogonalization.
+#' all columns in a `basis_matrix`. The orthogonalization is performed using a
+#' projection onto the orthonormal basis of `basis_matrix` computed via QR
+#' decomposition. Formally the result is
+#' `target_matrix - Q %*% crossprod(Q, target_matrix)` where `Q` contains the
+#' orthonormal columns spanning `basis_matrix`.
 #'
 #' @param target_matrix A numeric matrix whose columns will be orthogonalized.
 #' @param basis_matrix A numeric matrix representing the basis against which
@@ -236,52 +238,17 @@ ndx_orthogonalize_matrix_against_basis <- function(target_matrix, basis_matrix, 
   valid_basis_indices <- which(valid_basis_cols_ss >= tol)
 
   if (length(valid_basis_indices) == 0) {
-    warning("All columns in `basis_matrix` have near-zero variance. Returning original `target_matrix`.")
     return(target_matrix)
   }
-  effective_basis_matrix <- basis_matrix[, valid_basis_indices, drop = FALSE]
 
-  orthogonalized_matrix <- matrix(0.0, nrow = nrow(target_matrix), ncol = ncol(target_matrix))
-  colnames(orthogonalized_matrix) <- colnames(target_matrix)
-  rownames(orthogonalized_matrix) <- rownames(target_matrix)
+  B <- basis_matrix[, valid_basis_indices, drop = FALSE]
+  qr_basis <- qr(B)
+  Q <- qr.Q(qr_basis)
 
-  for (i in 1:ncol(target_matrix)) {
-    y_target_col <- target_matrix[, i, drop = FALSE]
-    
-    # Check if target column itself is near zero
-    if (sum(y_target_col^2, na.rm = TRUE) < tol) {
-      orthogonalized_matrix[, i] <- y_target_col # Already zero (or near zero)
-      next
-    }
-
-    # Using lm.fit for efficiency to get residuals
-    # y_target_col ~ effective_basis_matrix
-    # Residuals are y_target_col - X_basis * ( (t(X_basis) %*% X_basis)^-1 %*% t(X_basis) %*% y_target_col )
-    # No intercept is added by lm.fit by default, which is what we want here.
-    fit <- tryCatch({
-      stats::lm.fit(x = effective_basis_matrix, y = y_target_col)
-    }, error = function(e) {
-      warning(sprintf("lm.fit failed for target column %d during orthogonalization: %s. Column set to original.", i, e$message))
-      return(NULL) # Indicate failure
-    })
-
-    if (!is.null(fit) && !is.null(fit$residuals)) {
-      residuals_ortho <- fit$residuals
-      if (sum(residuals_ortho^2, na.rm = TRUE) < tol) {
-        # If residual is near zero, it means the target column was fully explained by the basis
-        # We keep it as zero vector (already initialized in orthogonalized_matrix)
-        # orthogonalized_matrix[, i] <- rep(0.0, nrow(target_matrix))
-      } else {
-        orthogonalized_matrix[, i] <- residuals_ortho
-      }
-    } else {
-      # If lm.fit failed, or did not produce residuals, keep original target column
-      # A warning would have been issued by the tryCatch error handler
-      orthogonalized_matrix[, i] <- y_target_col
-    }
-  }
-
-  return(orthogonalized_matrix)
+  result <- target_matrix - Q %*% crossprod(Q, target_matrix)
+  colnames(result) <- colnames(target_matrix)
+  rownames(result) <- rownames(target_matrix)
+  result
 }
 
 #' Merge Two Lists with Defaults
