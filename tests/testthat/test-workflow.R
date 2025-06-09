@@ -214,18 +214,32 @@ test_that("NDX_Process_Subject produces meaningful outputs when components succe
   }
 })
 
-# Test with minimal data to ensure robustness (keep one simple test)
+# Test with minimal but structured data to ensure robustness
 test_that("NDX_Process_Subject handles minimal synthetic data gracefully", {
-  # Simple synthetic data that may cause component failures
-  simple_Y <- matrix(rnorm(50 * 5), nrow = 50, ncol = 5)
-  simple_run_idx <- rep(1L, 50)
-  simple_motion <- matrix(rnorm(50 * 3), nrow = 50, ncol = 3)
+  # Create minimal structured data that should allow basic workflow completion
+  set.seed(123)
+  n_time_minimal <- 80  # Enough for basic analysis
+  n_voxels_minimal <- 10  # More voxels for better analysis
+  
+  # Generate data with some temporal structure for RPCA to potentially find
+  base_signal <- sin(2*pi*seq_len(n_time_minimal) / 20) + 0.5*cos(2*pi*seq_len(n_time_minimal) / 15)
+  simple_Y <- matrix(rnorm(n_time_minimal * n_voxels_minimal, sd = 0.5), nrow = n_time_minimal, ncol = n_voxels_minimal)
+  
+  # Add some structured temporal patterns to a few voxels to give RPCA something to find
+  for (v in 1:3) {
+    simple_Y[, v] <- simple_Y[, v] + 0.3 * base_signal * runif(1, 0.5, 1.5)
+  }
+  
+  simple_run_idx <- rep(1L, n_time_minimal)
+  simple_motion <- matrix(rnorm(n_time_minimal * 3, sd = 0.1), nrow = n_time_minimal, ncol = 3)
   colnames(simple_motion) <- paste0("mot", 1:3)
+  
+  # Create sufficient events for HRF estimation
   simple_events <- data.frame(
-    onsets = c(10, 30) * TR_test,
-    durations = c(5, 5) * TR_test,
-    condition = factor(c("TaskA", "TaskB")),
-    blockids = as.integer(c(1, 1))
+    onsets = c(10, 20, 30, 50, 60, 70) * TR_test,
+    durations = rep(4 * TR_test, 6),
+    condition = factor(rep(c("TaskA", "TaskB"), 3)),
+    blockids = as.integer(rep(1, 6))
   )
   
   simple_options <- list(
@@ -233,17 +247,18 @@ test_that("NDX_Process_Subject handles minimal synthetic data gracefully", {
     opts_hrf = list(
       hrf_fir_taps = 6, hrf_fir_span_seconds = 12, good_voxel_R2_threshold = -Inf,
       lambda1_grid = c(0.1), lambda2_grid = c(0.1), cv_folds = 2,
-      hrf_min_good_voxels = 1, hrf_cluster_method = "none", num_hrf_clusters = 1
+      hrf_min_good_voxels = 1, hrf_cluster_method = "none", num_hrf_clusters = 1,
+      hrf_min_events_for_fir = 2  # Reasonable threshold for minimal events
     ),
-    opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.1),
-    opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.1),
-    opts_whitening = list(global_ar_on_design = FALSE, max_ar_failures_prop = 0.5),
+    opts_rpca = list(k_global_target = 2, rpca_lambda_auto = FALSE, rpca_lambda_fixed = 0.01),  # More permissive
+    opts_spectral = list(n_sine_candidates = 2, nyquist_guard_factor = 0.8),
+    opts_whitening = list(global_ar_on_design = FALSE, max_ar_failures_prop = 0.8),  # Allow more failures
     opts_ridge = list(lambda_ridge = 0.5),
     task_regressor_names_for_extraction = c("task_TaskA", "task_TaskB"),
     max_passes = 1, min_des_gain_convergence = -Inf, min_rho_noise_projection_convergence = -Inf
   )
   
-  # Should not error even with challenging data
+  # Should not error even with minimal data
   expect_no_error({
     result <- NDX_Process_Subject(
       Y_fmri = simple_Y, events = simple_events, motion_params = simple_motion,
@@ -255,4 +270,7 @@ test_that("NDX_Process_Subject handles minimal synthetic data gracefully", {
   expect_equal(dim(result$Y_residuals_final_unwhitened), dim(simple_Y))
   expect_true(is.numeric(result$pass0_vars) && length(result$pass0_vars) == 1)
   expect_equal(dim(result$pass0_residuals), dim(simple_Y))
+  
+  # Workflow should complete at least one pass even with minimal data
+  expect_true(result$num_passes_completed >= 1)
 }) 

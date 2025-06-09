@@ -1,3 +1,8 @@
+# Helper for default options (used in various components)
+`%||%` <- function(a, b) {
+  if (is.null(a)) b else a
+}
+
 # Helper to generate some Y_residuals_cat and run_idx for RPCA tests
 .generate_rpca_test_data <- function(T_run = 100, V = 50, N_runs = 1) {
   total_T <- T_run * N_runs

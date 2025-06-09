@@ -37,6 +37,7 @@ A matrix (num_task_regressors x voxels) of the extracted task-related beta coeff
 Extracts beta coefficients corresponding to specified task regressors from the full
 set of beta coefficients. For Sprint 1, this function primarily handles extraction.
 The "unwhitening" aspect is a placeholder for future refinement.
+This helper is part of the modular anisotropic ridge API.
 }
 \details{
 Unwhitening beta coefficients is complex when different whitening strategies are applied

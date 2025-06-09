@@ -36,4 +36,3 @@ that yields the largest improvement in BIC (or AIC) when regressing the
 provided time-series. Addition stops when no remaining pair improves the
 criterion by more than `delta_threshold`.
 }
-\keyword{internal}

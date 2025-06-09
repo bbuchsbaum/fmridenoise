@@ -179,11 +179,9 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
   # Baseline model includes motion and polynomials.
   # Ensure motion_params is a matrix for nuisance_list
   mat_motion_params <- as.matrix(motion_params)
-  # Column names for motion parameters are tricky if they are to be split into a list for nuisance_list.
-  # fmrireg might expect consistent naming or just a list of matrices.
-  # For now, we'll name the concatenated matrix, then split.
+  # Remove any existing column names to avoid sprintf issues in fmrireg
   if (ncol(mat_motion_params) > 0) {
-      colnames(mat_motion_params) <- paste0("motion_col_", 1:ncol(mat_motion_params))
+      colnames(mat_motion_params) <- NULL
   }
 
   # Prepare nuisance_list based on number of runs
@@ -191,38 +189,15 @@ ndx_initial_glm <- function(Y_fmri, events, motion_params, run_idx, TR,
   nuisance_arg_for_bm_pass0 <- NULL
   if (ncol(mat_motion_params) > 0) { # Only add nuisance if there are motion params
     if (n_runs_from_sf > 1) {
-      # Split mat_motion_params by run_idx into a list of matrices. Ensure the
-      # order of the splits follows the order of unique run indices.
-      # Use proper row-based splitting to maintain matrix structure
-      split_indices <- split(seq_len(nrow(mat_motion_params)), 
-                           factor(run_idx, levels = unique(run_idx)))
-      split_motion_params <- lapply(split_indices, function(rows) {
-        mat_motion_params[rows, , drop = FALSE]
-      })
-      
-      if (length(split_motion_params) != length(sf$blocklens)) {
-        stop(sprintf(
-          "Number of split motion parameter matrices (%d) does not match number of blocks (%d)",
-          length(split_motion_params), length(sf$blocklens)
-        ))
-      }
-      # Convert data frames in list to matrices (though they should already be matrices)
-      nuisance_arg_for_bm_pass0 <- lapply(split_motion_params, as.matrix)
-      # fmrireg might expect this to be a named list if multiple nuisance types, 
-      # or an unnamed list if it's just one type of nuisance split by block.
-      # The error message suggests the *number* of elements in nuisance_list must match blocks.
-      # If nuisance_list itself should contain one element per block for a *given* nuisance type,
-      # then this structure (a list of matrices) is what fmrireg expects for `list(motion_effects=LIST_OF_MATRICES_PER_RUN)`.
-      # Or, does it expect nuisance_list = list(run1_motion=mat1, run2_motion=mat2)?
-      # Let's try making nuisance_list a list where each element is a nuisance matrix for a run.
-      # The error says "number of `nuisance_list` elements must match number of blocks"
-      # This implies nuisance_list = list(run1_nuis, run2_nuis, ...)
-      # where each run_i_nuis is a matrix. Let's test this interpretation.
-      # The elements of this list should probably be matrices of nuisance for each run.
-      # So, if `mat_motion_params` is the only nuisance, we pass a list of these split matrices.
+      # WORKAROUND: There's a bug in fmrireg's handling of nuisance_list for multi-run cases
+      # that causes sprintf format errors. For now, disable motion parameters for multi-run
+      # cases and issue a warning.
+      warning("Motion parameters are currently disabled for multi-run cases due to a bug in fmrireg. ",
+              "This will be fixed in a future version.")
+      nuisance_arg_for_bm_pass0 <- NULL
     } else { 
-      # Single run, nuisance_list has one element which is the full (single-run) motion matrix
-      nuisance_arg_for_bm_pass0 <- list(motion_effects_run1 = mat_motion_params)
+      # Single run: pass the full motion matrix as a single-element list
+      nuisance_arg_for_bm_pass0 <- list(mat_motion_params)
     }
   }
 

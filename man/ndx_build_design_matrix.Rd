@@ -15,7 +15,7 @@ ndx_build_design_matrix(
   poly_degree = NULL,
   verbose = TRUE,
   drop_zero_variance = FALSE,
-  zero_var_epsilon = 1e-8
+  zero_var_epsilon = 1e-08
 )
 }
 \arguments{
@@ -31,7 +31,7 @@ ndx_build_design_matrix(
 
 \item{run_idx}{Integer vector indicating run membership for each time-point.}
 
-\item{TR}{Repetition time, in seconds.}
+\item{TR}{Positive repetition time, in seconds.}
 
 \item{poly_degree}{Degree of Legendre polynomial baseline (per run).}
 
@@ -39,7 +39,9 @@ ndx_build_design_matrix(
 
 \item{drop_zero_variance}{Logical flag to drop near-zero variance regressors.}
 
-\item{zero_var_epsilon}{Numeric tolerance for detecting near-zero variance regressors.}
+\item{zero_var_epsilon}{Numeric tolerance for detecting near-zero variance
+regressors. Columns with variance below this value are considered
+near-constant. Default is 1e-8.}
 }
 \value{
 Numeric matrix with one column per regressor (or `NULL` on failure).

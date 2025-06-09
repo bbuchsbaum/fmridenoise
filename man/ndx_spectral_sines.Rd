@@ -43,12 +43,14 @@ criterion required to retain a candidate pair. Default 2.}
 \item{verbose}{Logical, whether to print verbose diagnostic messages.}
 }
 \value{
-A matrix with `2 * n_selected_peaks` columns and `length(mean_residual_for_spectrum)`
-  rows. Each pair of columns represents sine and cosine regressors for an
-  identified peak frequency. Attributes \code{"freq_hz"} and \code{"freq_rad_s"}
-  store the selected peak frequencies in Hz and radians/sec. If no peaks are
-  selected, a zero-column matrix with these attributes is returned. \code{NULL}
-  is used only when the input is invalid or spectral estimation fails.
+A matrix with `2 * n_selected_peaks` columns and
+  `length(mean_residual_for_spectrum)` rows. Each pair of columns
+  represents sine and cosine regressors for an identified peak
+  frequency. Attributes \code{"freq_hz"} and \code{"freq_rad_s"}
+  store the selected peak frequencies in Hz and radians/sec,
+  respectively. If no peaks survive selection, a zero-column matrix
+  with these attributes is returned. The function returns \code{NULL}
+  only when the input is invalid or when spectral estimation fails.
 }
 \description{
 This function uses multi-taper spectral estimation to identify prominent

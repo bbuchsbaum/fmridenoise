@@ -24,8 +24,9 @@ Must have the same number of rows as `Y_fmri`.}
 (e.g., c(rep(1,100), rep(2,100)) for two runs of 100 timepoints each).}
 
 \item{TR}{Numeric, repetition time in seconds.}
+
 \item{poly_degree}{Integer specifying the polynomial degree used for the
-Legendre baseline. Passed to \code{fmrireg::baseline_model}. Default: 1L.}
+Legendre baseline model. Passed to `fmrireg::baseline_model`. Default: 1L.}
 }
 \value{
 A list containing:

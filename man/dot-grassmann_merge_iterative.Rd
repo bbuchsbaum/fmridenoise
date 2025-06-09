@@ -10,10 +10,15 @@
 \item{V_list_valid}{A list of valid V_r matrices (Voxels x k_r). Each matrix should have the same number of rows (Voxels).}
 
 \item{k_target_global}{Integer, the desired number of dimensions (columns) for the final V_global.}
-\item{profile_svd}{Logical flag; if \code{TRUE}, execution time for each SVD step is recorded and returned as an attribute.}
+
+\item{profile_svd}{Logical, if TRUE record execution time of each SVD step
+(returned as an attribute \code{svd_times}).}
 }
 \value{
-A matrix V_global (Voxels x k_target_global). When \code{profile_svd} is \code{TRUE}, the matrix includes an attribute \code{svd_times}. Returns NULL if merging fails or \code{k_target_global} is 0.
+A matrix V_global (Voxels x k_target_global). If \code{profile_svd}
+  is TRUE, the matrix has an attribute \code{svd_times} containing elapsed
+  times for the SVD calls. Returns NULL if merging fails or
+  \code{k_target_global} is 0.
 }
 \description{
 Merges a list of voxel-space component matrices (V_r from each run/bag)

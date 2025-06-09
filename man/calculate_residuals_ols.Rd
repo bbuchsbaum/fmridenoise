@@ -17,4 +17,3 @@ Matrix of residuals (timepoints x variables/voxels).
 \description{
 Calculate OLS residuals using lm.fit
 }
-\keyword{internal}

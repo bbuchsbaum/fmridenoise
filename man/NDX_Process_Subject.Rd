@@ -33,16 +33,19 @@ indicates a TR to be excluded from HRF estimation and potentially other steps.
 If NULL, all TRs are considered valid initially.}
 
 \item{user_options}{A list containing various sub-lists of user-configurable options for each module:
-- `opts_pass0`: List of options for `ndx_initial_glm` (e.g., `poly_degree`). This is also used by `ndx_build_design_matrix` for `poly_degree_val`.
-- `opts_hrf`: List of options for `ndx_estimate_initial_hrfs` (e.g., `hrf_fir_taps`, `good_voxel_R2_threshold`, `lambda1_grid`, `lambda2_grid`, `cv_folds`).
-- `opts_rpca`: List of options for `ndx_rpca_temporal_components_multirun` (e.g., `k_per_run_target`, `rpca_lambda_auto`).
-- `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
-- `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
-- `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
-- `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
-- `max_passes` (integer): Maximum number of iterations for the refinement loop. Default: 3.
-- `min_des_gain_convergence` (numeric): Minimum DES gain to continue iteration. Default: 0.005.
-- `min_rho_noise_projection_convergence` (numeric): Minimum rho noise projection to continue iteration. Default: 0.01.}
+  - `opts_pass0`: List of options for `ndx_initial_glm` (e.g., `poly_degree`). This is also used by `ndx_build_design_matrix` for `poly_degree_val`.
+  - `opts_hrf`: List of options for `ndx_estimate_initial_hrfs` (e.g., `hrf_fir_taps`, `good_voxel_R2_threshold`, `lambda1_grid`, `lambda2_grid`, `cv_folds`).
+  - `opts_rpca`: List of options for `ndx_rpca_temporal_components_multirun` (e.g., `k_per_run_target`, `rpca_lambda_auto`).
+  - `opts_spectral`: List of options for `ndx_spectral_sines` (e.g., `n_sine_candidates`, `nyquist_guard_factor`, `k_tapers`, `nw`).
+  - `opts_whitening`: List of options for `ndx_ar2_whitening` (e.g., `order`, `global_ar_on_design`, `max_ar_failures_prop`).
+  - `opts_ridge`: List of options including `lambda_ridge` for `ndx_solve_ridge`.
+  - `opts_annihilation`: List of options for Annihilation Mode (e.g., `annihilation_enable_mode`, `annihilation_gdlite_k_max`).
+  - `task_regressor_names_for_extraction` (character vector): Names of task regressors to extract betas for.
+  - `max_passes` (integer): Maximum number of iterations for the refinement loop. Default: 3.
+  - `min_des_gain_convergence` (numeric): Minimum DES gain to continue iteration. Default: 0.005.
+  - `min_rho_noise_projection_convergence` (numeric): Minimum rho noise projection to continue iteration. Default: 0.01. 
+
+See `?ndx_user_options` for a complete reference of all available options.}
 
 \item{verbose}{Logical, if TRUE, print progress messages. Default: TRUE.}
 }
@@ -53,12 +56,19 @@ A list containing key outputs from the workflow, such as:
   - `beta_history_per_pass`: A list of beta estimates from each pass.
   - (Other final pass outputs like residuals, AR coeffs, nuisance components, etc.)
   - `spike_TR_mask`: Logical vector of TRs flagged as spikes from RPCA `S`.
+  - `pass0_residuals`: Residuals from the initial GLM (Pass 0) for diagnostics.
+  - `S_matrix_rpca_final`: Final RPCA sparse matrix for spike visualization.
+  - `ljung_box_p`: Ljung-Box p-value of whitened residuals.
+  - `num_hrf_clusters`: Effective HRF cluster count from HRF estimation.
+  - `annihilation_var_ratio` and `annihilation_verdict` when Annihilation mode is used.
 }
 \description{
-This function orchestrates the core modules of the ND-X pipeline. 
-It iteratively performs initial residual generation, FIR HRF estimation, 
-nuisance component identification (RPCA and Spectral), AR(2) pre-whitening, 
-and ridge regression until convergence or max passes.
+This function orchestrates the core modules of the ND-X pipeline.
+It iteratively performs initial residual generation, FIR HRF estimation,
+nuisance component identification (RPCA and Spectral), AR(2) pre-whitening,
+and ridge regression until convergence or max passes. Input types are
+validated and the function will stop with informative error messages if they
+do not meet expectations.
 }
 \examples{
 \dontrun{
@@ -82,4 +92,5 @@ res <- NDX_Process_Subject(
   run_idx = run_idx_ex,
   TR = 2
 )
-}}
+}
+}

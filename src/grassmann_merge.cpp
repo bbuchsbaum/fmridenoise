@@ -40,8 +40,9 @@ List grassmann_merge_iterative_cpp(List V_list, int k_target_global) {
 
             mat U;
             vec s;
+            mat V;
             double t1 = clock();
-            svd_econ(U, s, M_proj);
+            svd_econ(U, s, V, M_proj);
             double elapsed = (clock() - t1) / (double)CLOCKS_PER_SEC;
             svd_times[i - 1] = elapsed;
 

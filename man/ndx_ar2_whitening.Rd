@@ -10,9 +10,9 @@ ndx_ar2_whitening(
   Y_residuals_for_AR_fit,
   order = 2L,
   global_ar_on_design = TRUE,
-  max_ar_failures_prop = 0.3
   verbose = TRUE,
   weights = NULL,
+  max_ar_failures_prop = 0.3,
   global_ar_stat = c("mean", "median", "trimmed_mean")
 )
 }
@@ -31,14 +31,22 @@ that accounts for task effects and other known structured noise components.}
 \item{global_ar_on_design}{Logical, if TRUE (default), a global AR model (averaged from successful
 voxel-wise fits) is used to whiten `X_design_full`. If FALSE, `X_design_full` is not whitened,
 and users should handle its whitening if necessary for downstream voxel-wise modeling.}
-\item{max_ar_failures_prop}{Numeric between 0 and 1 specifying the maximum
-allowed proportion of voxels with failed or unstable AR fits. If the observed
-proportion exceeds this threshold, whitening is skipped and a warning is
-issued.}
-\item{verbose}{Logical, if TRUE progress messages are printed.}
-\item{weights}{Optional numeric matrix of weights used for weighted AR coefficient estimation.}
-\item{global_ar_stat}{Method used to summarize voxel-wise AR coefficients when computing the global filter.
-Options are "mean" (default), "median", or "trimmed_mean".}
+
+\item{verbose}{Logical, if TRUE (default) progress messages are printed. Set to FALSE to silence
+console output.}
+
+\item{weights}{Optional numeric matrix of weights (timepoints x voxels) used
+for weighted AR coefficient estimation. If NULL, unweighted estimation is
+performed.}
+
+\item{max_ar_failures_prop}{Numeric between 0 and 1. If the proportion of
+voxels with failed or unstable AR fits exceeds this threshold, whitening is
+skipped and a warning is issued. Default: 0.3.}
+
+\item{global_ar_stat}{Character string specifying how to summarize voxel-wise
+AR coefficients when computing the global filter for `X_design_full`.
+Options are "mean" (default), "median", or "trimmed_mean" (10% trimmed
+mean).}
 }
 \value{
 A list containing:
@@ -64,6 +72,8 @@ The AR(order) model for a time series `y_t` is:
 The whitened value `y*_t` (i.e., the estimate of `e_t`) is `y_t - phi_1 * y_{t-1} - ... - phi_order * y_{t-order}`.
 This transformation is applied to `Y_data` using voxel-specific coefficients. Unstable AR coefficients are set to zero (no whitening for that voxel).
 If `global_ar_on_design` is TRUE, `X_design_full` is whitened using averaged AR coefficients (from stable fits).
-The first `order` rows of the whitened matrices will contain NAs due to the filter initialization (`method="convolution", sides=1`).
+Whitening is performed with `stats::filter(method = "convolution", sides = 1)` so that the
+output represents the innovations of the AR model.
+The first `order` rows of the whitened matrices will contain `NA`s due to the filter initialization.
 The `na_mask` in the output identifies these rows.
 }

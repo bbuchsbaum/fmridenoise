@@ -24,4 +24,3 @@ Valid observations for each voxel are selected using
   Squares (RSS) are computed from these valid values only. If the calculated
   TSS is zero the returned R\eqn{^2} for that voxel is set to zero.
 }
-\keyword{internal}

@@ -11,9 +11,12 @@ ndx_solve_anisotropic_ridge(
   na_mask = NULL,
   projection_mats = NULL,
   lambda_values = NULL,
+  weights = NULL,
   gcv_lambda = FALSE,
   res_var_scale = 1,
-  lambda_grid = 10^seq(-2, 2, length.out = 5)
+  lambda_grid = 10^seq(-2, 2, length.out = 5),
+  K_penalty_mat = NULL,
+  use_penalty_matrix = FALSE
 )
 }
 \arguments{
@@ -24,26 +27,51 @@ ndx_solve_anisotropic_ridge(
 \item{K_penalty_diag}{A numeric vector containing the diagonal elements of the penalty matrix K.
 Its length must be equal to `ncol(X_whitened)`.}
 
-\item{na_mask}{Optional. A logical vector where TRUE indicates timepoints to exclude.
-If NULL, all timepoints are used.}
+\item{na_mask}{Optional. A logical vector where TRUE indicates timepoints to
+exclude. If NULL, all timepoints are used.}
 
 \item{projection_mats}{Optional list of projection matrices produced by
-\code{ndx_compute_projection_matrices}. Used when \code{K_penalty_diag} is not supplied.}
+`ndx_compute_projection_matrices`. If provided along with `lambda_values`,
+`K_penalty_diag` (or `K_penalty_mat` when `use_penalty_matrix = TRUE`) is
+constructed automatically.}
 
-\item{lambda_values}{Optional list with lambda parameters (e.g., \code{lambda_parallel},
-\code{lambda_perp_signal}) used to construct \code{K_penalty_diag} when it is not given.}
-\item{gcv_lambda}{Logical flag to enable GCV tuning of \code{lambda_parallel}.}
-\item{res_var_scale}{Residual variance estimate used to scale the GCV search grid.}
-\item{lambda_grid}{Numeric vector of candidate lambda values for GCV.}
+\item{lambda_values}{Optional list with elements `lambda_parallel`,
+`lambda_perp_signal`, `lambda_gd`, and `lambda_unique` used when a penalty
+matrix or diagonal is not given.}
+
+\item{weights}{Optional numeric vector or matrix of weights to apply to each
+timepoint. If a matrix, its dimensions must match `Y_whitened` and the
+weighting is applied per voxel.}
+
+\item{gcv_lambda}{Logical, if TRUE perform GCV tuning of `lambda_parallel`
+(and by extension `lambda_perp_signal`) using `ndx_gcv_tune_lambda_parallel`.}
+
+\item{res_var_scale}{Numeric, residual variance estimate used to scale the
+lambda search grid when `gcv_lambda` is TRUE.}
+
+\item{lambda_grid}{Numeric vector of candidate lambda values for GCV when
+`gcv_lambda` is TRUE. Defaults to `10^seq(-2, 2, length.out = 5)`.}
+
+\item{K_penalty_mat}{Optional full penalty matrix to use instead of
+`K_penalty_diag`. When supplied, it must be a square matrix with dimension
+equal to `ncol(X_whitened)`.}
+
+\item{use_penalty_matrix}{Logical, when TRUE a full penalty matrix is used.
+The matrix is either supplied via `K_penalty_mat` or constructed from
+`projection_mats` and `lambda_values`. The default FALSE preserves the
+historic diagonal-only behaviour.}
 }
 \value{
-A list with components 
-\code{betas} (matrix of estimated coefficients) and 
-\code{chol_RtR} (Cholesky factor of the penalized normal equations; may be \code{NULL}).
-Returns \code{NULL} if inputs are invalid or the problem cannot be solved.
+A list with elements:
+  \describe{
+    \item{betas}{Matrix of estimated coefficients (n_regressors x voxels).}
+    \item{chol_RtR}{Cholesky factor of the penalized normal equations. NULL when weights are a matrix.}
+  }
+  Returns NULL if inputs are invalid or the problem cannot be solved.
 }
 \description{
 Solves for beta coefficients in a ridge regression model: Y = X beta + E,
 minimizing ||Y - X beta||^2 + beta^T K beta, where K is a diagonal penalty matrix.
 Handles missing data specified by `na_mask` by removing corresponding timepoints.
+This solver underpins the modular anisotropic ridge API.
 }

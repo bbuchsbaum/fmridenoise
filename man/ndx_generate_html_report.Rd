@@ -4,25 +4,38 @@
 \alias{ndx_generate_html_report}
 \title{Generate ND-X HTML Diagnostic Report}
 \usage{
-ndx_generate_html_report(workflow_output, pass0_residuals, TR,
-  output_dir = "./diagnostics", filename = "ndx_diagnostic_report.html",
-  include_progressive_enhancement = TRUE)
+ndx_generate_html_report(
+  workflow_output,
+  pass0_residuals,
+  TR,
+  output_dir = "./diagnostics",
+  filename = "ndx_diagnostic_report.html",
+  include_progressive_enhancement = TRUE
+)
 }
 \arguments{
-\item{workflow_output}{List returned by \code{NDX_Process_Subject}.}
+\item{workflow_output}{List returned by `NDX_Process_Subject`.}
 
-\item{pass0_residuals}{Matrix of residuals from \code{ndx_initial_glm} used for the PSD comparison.}
+\item{pass0_residuals}{Matrix of residuals from `ndx_initial_glm` used as the
+starting point for ND-X. Required for the PSD comparison.}
 
-\item{TR}{Repetition time in seconds.}
+\item{TR}{Numeric repetition time (seconds) for frequency axis in the PSD plot.}
 
-\item{output_dir}{Directory to save the HTML and PNG figures.}
+\item{output_dir}{Directory in which to save the HTML file and PNG figures.}
 
-\item{filename}{Name of the HTML file to create.}
-\item{include_progressive_enhancement}{Logical, whether to include the progressive enhancement visualization.}}
-\value{Path to the generated HTML file (invisibly).}
+\item{filename}{Name of the HTML file to create. Default "ndx_diagnostic_report.html".}
+
+\item{include_progressive_enhancement}{Logical, whether to include the four-panel
+progressive enhancement visualization (requires Annihilation Mode). Default TRUE.}
+}
+\value{
+Invisibly, the path to the generated HTML file.
+}
 \description{
-Creates a minimal HTML report summarizing ND-X diagnostics: DES per pass,
-\eqn{\beta}-stability across runs, Ljung-Box whiteness of residuals,
-residual power spectral density comparison, an optional spike carpet plot,
-and key adaptive hyperparameter values. Internal helper functions create each diagnostic plot.
+This function creates a simple HTML report summarizing key diagnostics from
+a run of `NDX_Process_Subject`. It plots the Denoising Efficacy Score (DES)
+across passes, compares the power spectral density (PSD) of residuals from
+Pass 0 and the final ND-X pass, visualizes \eqn{\beta}-stability across runs,
+shows the Ljung--Box p-value progression, and optionally displays a spike
+"carpet" plot from the RPCA `S` matrix. Internal helper functions create each diagnostic plot.
 }
