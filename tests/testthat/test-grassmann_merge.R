@@ -1,4 +1,4 @@
-context(".grassmann_merge_iterative - Orthonormal merging")
+context(".grassmann_merge_iterative_rcpp - Orthonormal merging")
 
 # Helper function to check orthonormality of a matrix
 .is_orthonormal <- function(M, tol = 1e-6) {
@@ -14,7 +14,7 @@ V2 <- diag(5)[, 3:4]
 V3 <- qr.Q(qr(matrix(rnorm(25), 5))) # 5x5 orthonormal, take last column
 V3 <- V3[,5, drop=FALSE]
 
-merged <- .grassmann_merge_iterative(list(V1, V2, V3), k_target_global = 3L)
+merged <- .grassmann_merge_iterative_rcpp(list(V1, V2, V3), k_target_global = 3L)
 
 
 test_that("Merged matrix has correct dimensions", {
