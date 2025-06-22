@@ -44,6 +44,35 @@ test_that("ljung box helpers return NA for constant data", {
   expect_true(is.na(ndx_ljung_box_pval(Y_const, lag = 5)))
 })
 
+test_that("ljung box helpers handle NAs and short series", {
+  set.seed(3)
+  Y <- matrix(rnorm(8 * 2), nrow = 8, ncol = 2)
+  Y[1:4, 2] <- NA  # too few non-NA observations for column 2
+  pvals <- compute_ljung_box_pvalues(Y, lag = 5)
+  expect_true(!is.na(pvals[1]) && is.na(pvals[2]))
+
+  short_vec <- rnorm(4)
+  expect_true(is.na(ndx_ljung_box_pval(short_vec, lag = 5)))
+})
+
+test_that("merge_lists recursively merges defaults and user opts", {
+  defaults <- list(a = 1, b = 2, c = list(d = 3, e = 4))
+  user <- list(b = 20, c = list(e = 40))
+  res <- merge_lists(defaults, user)
+  expect_equal(res$a, 1)
+  expect_equal(res$b, 20)
+  expect_equal(res$c$d, 3)
+  expect_equal(res$c$e, 40)
+
+  res2 <- merge_lists(defaults, NULL)
+  expect_equal(res2, defaults)
+})
+
+test_that("calculate_beta_stability validates input list", {
+  expect_error(calculate_beta_stability(list()), "betas_per_pass must be a non-empty list")
+  expect_error(calculate_beta_stability(matrix(1:4,2,2)), "betas_per_pass must be a non-empty list")
+})
+
 # Test ndx_default_user_options structure
 
 test_that("ndx_default_user_options returns expected structure", {
