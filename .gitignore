@@ -16,3 +16,8 @@ temp_debug_spectral.R
 *.swp
 *.swo
 Rplots.pdf
+
+# Build outputs
+src/*.o
+src/*.so
+*.tar.gz
